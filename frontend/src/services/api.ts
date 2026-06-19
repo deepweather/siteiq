@@ -3,6 +3,43 @@ import type { Recommendation } from '../types/analytics';
 
 const API_BASE = 'http://localhost:8000';
 
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  description: string;
+  type: string;
+}
+
+export async function fetchProjects(): Promise<ProjectSummary[]> {
+  const res = await fetch(`${API_BASE}/api/projects`);
+  return res.json();
+}
+
+export async function loadProject(id: string): Promise<void> {
+  await fetch(`${API_BASE}/api/projects/${id}/load`, { method: 'POST' });
+}
+
+export interface PortfolioSite {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  workers: number;
+  equipment: number;
+  idle_equipment: number;
+  zones: number;
+  day: number;
+  site_width: number;
+  site_height: number;
+  estimated_monthly_waste: number;
+  active: boolean;
+}
+
+export async function fetchPortfolio(): Promise<PortfolioSite[]> {
+  const res = await fetch(`${API_BASE}/api/portfolio`);
+  return res.json();
+}
+
 export async function fetchSite(): Promise<Site> {
   const res = await fetch(`${API_BASE}/api/site`);
   return res.json();

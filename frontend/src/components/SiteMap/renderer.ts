@@ -440,15 +440,24 @@ function drawEquipmentTopDown(ctx: CanvasRenderingContext2D, equipment: AssetUpd
     const y = py(e.y);
     const operating = e.state === 'operating';
 
-    const glowR = iconSize * 0.6;
+    const glowR = iconSize * 0.75;
+
+    // Outer status ring
     ctx.beginPath();
     ctx.arc(x, y, glowR, 0, Math.PI * 2);
-    ctx.fillStyle = operating ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+    ctx.fillStyle = operating ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)';
     ctx.fill();
     ctx.strokeStyle = operating ? '#16a34a' : '#dc2626';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
     ctx.stroke();
 
+    // Solid background behind icon so it's not occluded by zone textures
+    ctx.beginPath();
+    ctx.arc(x, y, iconSize * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fill();
+
+    // Icon
     ctx.font = `${iconSize}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -655,11 +664,11 @@ function drawLegend(ctx: CanvasRenderingContext2D, cw: number) {
   const dot = 5;
 
   ctx.fillStyle = 'rgba(255,255,255,0.92)';
-  roundRect(ctx, lx - 6, ly - 4, 100, 78, 4);
+  roundRect(ctx, lx - 6, ly - 4, 100, 100, 4);
   ctx.fill();
   ctx.strokeStyle = 'rgba(0,0,0,0.1)';
   ctx.lineWidth = 1;
-  roundRect(ctx, lx - 6, ly - 4, 100, 78, 4);
+  roundRect(ctx, lx - 6, ly - 4, 100, 100, 4);
   ctx.stroke();
 
   ctx.font = '8px Inter, sans-serif';

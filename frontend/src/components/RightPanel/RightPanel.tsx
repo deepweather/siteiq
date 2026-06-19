@@ -10,8 +10,10 @@ interface RightPanelProps {
   waste: WasteSummary | null;
   baseline: WasteSummary | null;
   savings: { toilet: number; material: number; equipment: number; total: number } | null;
+  pendingSavingsMonthly: number;
   schedule: ScheduleEntry[];
   currentDay: number;
+  recommendations: Recommendation[];
   onRecsChange: (recs: Recommendation[]) => void;
   selectedAssetId: string | null;
   onAssetDeselect: () => void;
@@ -19,7 +21,7 @@ interface RightPanelProps {
 
 type Tab = 'waste' | 'recs' | 'timeline';
 
-export function RightPanel({ waste, baseline, savings, schedule, currentDay, onRecsChange, selectedAssetId, onAssetDeselect }: RightPanelProps) {
+export function RightPanel({ waste, baseline, savings, pendingSavingsMonthly, schedule, currentDay, recommendations, onRecsChange, selectedAssetId, onAssetDeselect }: RightPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('waste');
 
   const tabs: { id: Tab; label: string }[] = [
@@ -64,10 +66,19 @@ export function RightPanel({ waste, baseline, savings, schedule, currentDay, onR
           </div>
           <div className="flex-1 overflow-y-auto p-3">
             {activeTab === 'waste' && (
-              <WasteReport waste={waste} baseline={baseline} savings={savings} />
+              <WasteReport
+                waste={waste}
+                baseline={baseline}
+                savings={savings}
+                pendingSavingsMonthly={pendingSavingsMonthly}
+                onSwitchToOptimize={() => setActiveTab('recs')}
+              />
             )}
             {activeTab === 'recs' && (
-              <Recommendations onRecsChange={onRecsChange} />
+              <Recommendations
+                recommendations={recommendations}
+                onRecsChange={onRecsChange}
+              />
             )}
             {activeTab === 'timeline' && (
               <Timeline schedule={schedule} currentDay={currentDay} />

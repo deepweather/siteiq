@@ -75,47 +75,48 @@ export function AssetDetail({ assetId, onClose }: AssetDetailProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="text-xs text-muted-foreground font-medium uppercase">{data.type}</div>
-          <div className="text-lg font-semibold text-foreground">
-            {SUBTYPE_LABELS[data.subtype] || data.subtype}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            {data.type === 'worker' && (
+              <span
+                className="inline-block w-3 h-3 rounded-full shrink-0"
+                style={{ backgroundColor: TRADE_COLORS[data.subtype] || '#a1a1aa' }}
+              />
+            )}
+            <div className="text-lg font-semibold text-foreground truncate">
+              {data.type === 'worker'
+                ? `${SUBTYPE_LABELS[data.subtype] || data.subtype} Worker`
+                : SUBTYPE_LABELS[data.subtype] || data.subtype}
+            </div>
           </div>
-          <div className="text-xs text-muted-foreground font-mono">{data.id}</div>
+          <div className="flex items-center gap-2 mt-1">
+            {data.assigned_zone && (
+              <span className="text-xs text-muted-foreground">
+                {data.assigned_zone.replace('zone-', 'Zone ').toUpperCase()}
+              </span>
+            )}
+            <span className="text-xs text-muted-foreground font-mono">{data.id}</span>
+          </div>
         </div>
         <button
           onClick={onClose}
-          className="w-7 h-7 rounded-md border border-border flex items-center justify-center text-muted-foreground hover:bg-secondary text-sm"
+          className="w-7 h-7 rounded-md border border-border flex items-center justify-center text-muted-foreground hover:bg-secondary text-sm shrink-0"
         >
           &times;
         </button>
       </div>
 
       <div className="flex items-center gap-2">
-        {data.type === 'worker' && (
-          <span
-            className="inline-block w-3 h-3 rounded-full"
-            style={{ backgroundColor: TRADE_COLORS[data.subtype] || '#a1a1aa' }}
-          />
-        )}
         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
           data.state === 'working' || data.state === 'operating' || data.state === 'active'
             ? 'bg-success/10 text-success'
             : data.state === 'removed'
             ? 'bg-destructive/10 text-destructive'
-            : 'bg-secondary text-muted-foreground'
+            : 'bg-warning/10 text-warning'
         }`}>
           {STATE_LABELS[data.state] || data.state}
         </span>
-        {data.assigned_zone && (
-          <span className="text-xs text-muted-foreground">
-            {data.assigned_zone.replace('zone-', 'Zone ').replace(/^\w/, c => c.toUpperCase())}
-          </span>
-        )}
-      </div>
-
-      <div className="text-xs text-muted-foreground font-mono">
-        Position: ({data.x}, {data.y})
       </div>
 
       {data.type === 'worker' && data.detail && <WorkerDetail detail={data.detail} />}

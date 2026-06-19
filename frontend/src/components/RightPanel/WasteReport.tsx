@@ -6,9 +6,11 @@ interface WasteReportProps {
   waste: WasteSummary | null;
   baseline: WasteSummary | null;
   savings: { toilet: number; material: number; equipment: number; total: number } | null;
+  pendingSavingsMonthly: number;
+  onSwitchToOptimize: () => void;
 }
 
-export function WasteReport({ waste, baseline, savings }: WasteReportProps) {
+export function WasteReport({ waste, baseline, savings, pendingSavingsMonthly, onSwitchToOptimize }: WasteReportProps) {
   if (!waste) {
     return (
       <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
@@ -22,30 +24,54 @@ export function WasteReport({ waste, baseline, savings }: WasteReportProps) {
 
   return (
     <div className="space-y-4">
-      <div className="bg-secondary rounded-lg p-4">
-        <div className="text-xs text-muted-foreground font-medium">Total Monthly Waste</div>
-        <div className="font-mono text-3xl font-bold text-foreground tabular-nums mt-1">
-          {formatCurrency(waste.total_monthly)}
-        </div>
+      {/* Hero waste number */}
+      <div className="bg-destructive/8 border border-destructive/20 rounded-lg p-4">
         {hasSavings ? (
-          <div className="flex items-center gap-2 mt-1.5">
-            <span className="inline-flex items-center gap-1 font-mono text-xs text-success bg-success/10 px-2 py-0.5 rounded-full tabular-nums">
-              {formatCurrency(savings.total)} saved
-            </span>
-            <span className="text-muted-foreground text-xs">
-              from {formatCurrency(baselineTotal)}
-            </span>
-          </div>
+          <>
+            <div className="text-xs text-muted-foreground font-medium">Monthly Waste — Optimized</div>
+            <div className="font-mono text-3xl font-bold text-foreground tabular-nums mt-1">
+              {formatCurrency(waste.total_monthly)}
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-success bg-success/10 px-2 py-1 rounded-full tabular-nums">
+                {formatCurrency(savings.total)} saved/mo
+              </span>
+              <span className="text-muted-foreground text-xs line-through font-mono tabular-nums">
+                {formatCurrency(baselineTotal)}
+              </span>
+            </div>
+          </>
         ) : (
-          <div className="text-xs text-muted-foreground mt-1.5">
-            {formatCurrency(waste.total_daily)}/day across all categories
-          </div>
+          <>
+            <div className="text-xs text-destructive font-semibold uppercase tracking-wider">Recoverable Waste</div>
+            <div className="font-mono text-4xl font-bold text-destructive tabular-nums mt-1">
+              {formatCurrency(waste.total_monthly)}
+              <span className="text-lg text-destructive/60 font-medium">/mo</span>
+            </div>
+            <div className="text-xs text-muted-foreground mt-1.5">
+              {formatCurrency(waste.total_daily)} lost every day this layout stays unchanged
+            </div>
+          </>
         )}
       </div>
 
+      {/* ROI frame */}
+      <ROICard
+        wasteMonthly={waste.total_monthly}
+        savingsMonthly={hasSavings ? savings.total : 0}
+        pendingSavingsMonthly={pendingSavingsMonthly}
+        hasSavings={!!hasSavings}
+        onSwitchToOptimize={onSwitchToOptimize}
+      />
+
+      {/* Included services — vendor consolidation */}
+      <IncludedServices />
+
+      {/* Category rows */}
       <div className="space-y-1">
         <CostRow
-          label="Unproductive Movement"
+          label="Facility Access Loss"
+          sublabel="Toilet & break travel time"
           daily={waste.toilet_walk_daily}
           monthly={waste.toilet_walk_monthly}
           detail={
@@ -61,6 +87,7 @@ export function WasteReport({ waste, baseline, savings }: WasteReportProps) {
         />
         <CostRow
           label="Equipment Idle"
+          sublabel="Rental cost during downtime"
           daily={waste.equipment_idle_daily}
           monthly={waste.equipment_idle_monthly}
           detail={
@@ -80,6 +107,7 @@ export function WasteReport({ waste, baseline, savings }: WasteReportProps) {
         />
         <CostRow
           label="Material Staging"
+          sublabel="Walk distance to misplaced materials"
           daily={waste.material_handling_daily}
           monthly={waste.material_handling_monthly}
         />
@@ -88,8 +116,9 @@ export function WasteReport({ waste, baseline, savings }: WasteReportProps) {
   );
 }
 
-function CostRow({ label, daily, monthly, detail }: {
+function CostRow({ label, sublabel, daily, monthly, detail }: {
   label: string;
+  sublabel?: string;
   daily: number;
   monthly: number;
   detail?: React.ReactNode;
@@ -103,7 +132,7 @@ function CostRow({ label, daily, monthly, detail }: {
         className={`w-full p-3 text-left hover:bg-secondary/50 ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
         onClick={() => hasDetail && setOpen(!open)}
       >
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2 mb-0.5">
           {hasDetail && (
             <span className={`text-[10px] text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`}>
               &#9654;
@@ -111,6 +140,7 @@ function CostRow({ label, daily, monthly, detail }: {
           )}
           <span className="text-sm font-medium text-foreground">{label}</span>
         </div>
+        {sublabel && <div className="text-[10px] text-muted-foreground ml-4 mb-1">{sublabel}</div>}
         <div className="flex items-baseline gap-3 ml-4">
           <span className="font-mono text-sm font-semibold text-destructive tabular-nums">{formatCurrency(daily)}/day</span>
           <span className="font-mono text-xs text-muted-foreground tabular-nums">{formatCurrency(monthly)}/mo</span>
@@ -120,6 +150,82 @@ function CostRow({ label, daily, monthly, detail }: {
         <div className="px-3 pb-3 pt-1 border-t border-border bg-secondary/30">
           {detail}
         </div>
+      )}
+    </div>
+  );
+}
+
+function IncludedServices() {
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <div className="px-3 py-2 bg-secondary/50 border-b border-border flex items-center justify-between">
+        <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Included at no extra cost</span>
+        <span className="text-[10px] text-success font-mono font-semibold">€0/mo</span>
+      </div>
+      <div className="p-2.5 space-y-1.5">
+        <ServiceRow icon="🔒" label="24/7 Site Security" vendor="replaces BauWatch" vendorCost="€1.200/mo" />
+        <ServiceRow icon="🦺" label="PPE Compliance" vendor="replaces manual audits" vendorCost="€400/mo" />
+        <ServiceRow icon="📊" label="Progress Tracking" vendor="replaces Buildots" vendorCost="€2.500/mo" />
+      </div>
+    </div>
+  );
+}
+
+function ServiceRow({ icon, label, vendor, vendorCost }: { icon: string; label: string; vendor: string; vendorCost: string }) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-sm w-5 text-center">{icon}</span>
+      <span className="text-foreground font-medium flex-1">{label}</span>
+      <span className="text-muted-foreground text-[10px]">{vendor}</span>
+      <span className="text-muted-foreground text-[10px] line-through font-mono tabular-nums">{vendorCost}</span>
+    </div>
+  );
+}
+
+function ROICard({ wasteMonthly, savingsMonthly, pendingSavingsMonthly, hasSavings, onSwitchToOptimize }: {
+  wasteMonthly: number;
+  savingsMonthly: number;
+  pendingSavingsMonthly: number;
+  hasSavings: boolean;
+  onSwitchToOptimize: () => void;
+}) {
+  const systemCost = 2000;
+  const recoveredMonthly = hasSavings ? savingsMonthly : pendingSavingsMonthly;
+  const paybackRatio = recoveredMonthly > 0 ? Math.round(recoveredMonthly / systemCost) : 0;
+  const annualNet = (recoveredMonthly - systemCost) * 12;
+
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <div className="px-3 py-2.5 bg-secondary/50 border-b border-border">
+        <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">SiteIQ ROI</div>
+      </div>
+      <div className="p-3 space-y-2">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">System cost</span>
+          <span className="font-mono text-foreground tabular-nums">{formatCurrency(systemCost)}/mo</span>
+        </div>
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">{hasSavings ? 'Recovered' : 'Recoverable'}</span>
+          <span className="font-mono text-success font-semibold tabular-nums">{formatCurrency(recoveredMonthly)}/mo</span>
+        </div>
+        <div className="border-t border-border pt-2 flex items-center justify-between">
+          <span className="text-xs font-medium text-foreground">Payback</span>
+          <span className="font-mono text-sm font-bold text-primary tabular-nums">{paybackRatio}x</span>
+        </div>
+        {annualNet > 0 && (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Net annual value</span>
+            <span className="font-mono text-success font-semibold tabular-nums">{formatCurrency(annualNet)}</span>
+          </div>
+        )}
+      </div>
+      {!hasSavings && pendingSavingsMonthly > 0 && (
+        <button
+          onClick={onSwitchToOptimize}
+          className="w-full py-2.5 text-xs font-semibold bg-success text-white hover:bg-success/90 transition-colors"
+        >
+          Apply optimizations — recover {formatCurrency(pendingSavingsMonthly)}/mo
+        </button>
       )}
     </div>
   );

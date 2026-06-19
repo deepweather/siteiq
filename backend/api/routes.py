@@ -19,6 +19,52 @@ class SpeedRequest(BaseModel):
     speed: float
 
 
+@router.get("/api/projects")
+async def list_projects():
+    from simulation.site_factory import get_project_list
+    return get_project_list()
+
+
+@router.get("/api/portfolio")
+async def get_portfolio():
+    """Returns simulated portfolio metrics for all project templates."""
+    from simulation.site_factory import PROJECT_TEMPLATES
+    portfolio = []
+    for key, tmpl in PROJECT_TEMPLATES.items():
+        total_workers = sum(count for zdef in tmpl["zones"] for _, count in zdef["workers"])
+        total_equipment = len(tmpl["equipment"])
+        idle_equipment = sum(1 for e in tmpl["equipment"] if e["state"] == "idle")
+        portfolio.append({
+            "id": key,
+            "name": tmpl["name"],
+            "type": tmpl["type"],
+            "description": tmpl["description"],
+            "workers": total_workers,
+            "equipment": total_equipment,
+            "idle_equipment": idle_equipment,
+            "zones": len(tmpl["zones"]),
+            "day": tmpl["start_day"],
+            "site_width": tmpl["width"],
+            "site_height": tmpl["height"],
+            "estimated_monthly_waste": round(total_workers * 50 * 0.12 * 22 + total_equipment * 150 * 0.4 * 11 * 22, 0),
+            "active": key == (_engine.project_id if _engine else "westhafen"),
+        })
+    return portfolio
+
+
+@router.post("/api/projects/{project_id}/load")
+async def load_project(project_id: str):
+    if not _engine:
+        raise HTTPException(status_code=503, detail="Engine not ready")
+    from simulation.site_factory import PROJECT_TEMPLATES
+    if project_id not in PROJECT_TEMPLATES:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _engine.load_project(project_id)
+    global _recommendations_cache
+    _recommendations_cache = []
+    return {"status": "loaded", "project_id": project_id}
+
+
 @router.get("/api/site")
 async def get_site():
     if not _engine:

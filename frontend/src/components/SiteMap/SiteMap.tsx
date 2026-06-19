@@ -4,6 +4,7 @@ import type { Zone } from '../../types/site';
 import type { Recommendation } from '../../types/analytics';
 import { Toggle } from '../common/Toggle';
 import { renderFrame } from './renderer';
+import { CameraFeed } from './CameraFeed';
 
 interface SiteMapProps {
   zones: Zone[];
@@ -20,9 +21,10 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, re
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const sizeRef = useRef({ w: 0, h: 0 });
-  const [showTrails, setShowTrails] = useState(true);
+  const [showTrails, setShowTrails] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showRecs, setShowRecs] = useState(true);
+  const [showCameras, setShowCameras] = useState(false);
 
   const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
   const dragRef = useRef<{ active: boolean; moved: boolean; startX: number; startY: number; startPanX: number; startPanY: number }>({
@@ -232,10 +234,21 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, re
       <div className="flex items-center gap-2 px-3 py-2 bg-card border-b border-border">
         <Toggle label="Trails" active={showTrails} onChange={() => setShowTrails(!showTrails)} />
         <Toggle label="Heatmap" active={showHeatmap} onChange={() => setShowHeatmap(!showHeatmap)} />
-        <Toggle label="Optimize" active={showRecs} onChange={() => setShowRecs(!showRecs)} />
+        <Toggle label="Show Fixes" active={showRecs} onChange={() => setShowRecs(!showRecs)} />
+        <div className="w-px h-4 bg-border mx-1" />
+        <Toggle label="Cameras" active={showCameras} onChange={() => setShowCameras(!showCameras)} />
       </div>
-      <div ref={containerRef} className="flex-1 relative">
-        <canvas ref={canvasRef} className="absolute inset-0" />
+      <div className={`flex-1 flex ${showCameras ? 'flex-col' : ''} min-h-0`}>
+        <div ref={containerRef} className="flex-1 relative">
+          <canvas ref={canvasRef} className="absolute inset-0" />
+        </div>
+        {showCameras && (
+          <div className="h-[160px] shrink-0 border-t border-border bg-black flex gap-px">
+            <CameraFeed assetsRef={assetsRef} cameraId={0} />
+            <CameraFeed assetsRef={assetsRef} cameraId={1} />
+            <CameraFeed assetsRef={assetsRef} cameraId={2} />
+          </div>
+        )}
       </div>
     </div>
   );

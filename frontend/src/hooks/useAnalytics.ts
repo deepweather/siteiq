@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { WasteSummary } from '../types/analytics';
 
 interface AnalyticsState {
@@ -10,6 +10,7 @@ interface AnalyticsState {
     equipment: number;
     total: number;
   } | null;
+  resetBaseline: () => void;
 }
 
 export function useAnalytics(wsAnalytics: WasteSummary | null): AnalyticsState {
@@ -27,6 +28,12 @@ export function useAnalytics(wsAnalytics: WasteSummary | null): AnalyticsState {
     }
   }, [wsAnalytics]);
 
+  const resetBaseline = useCallback(() => {
+    baselineRef.current = null;
+    setBaselineWaste(null);
+    setCurrentWaste(null);
+  }, []);
+
   const savings = currentWaste && baselineWaste ? {
     toilet: baselineWaste.toilet_walk_monthly - currentWaste.toilet_walk_monthly,
     material: baselineWaste.material_handling_monthly - currentWaste.material_handling_monthly,
@@ -34,5 +41,5 @@ export function useAnalytics(wsAnalytics: WasteSummary | null): AnalyticsState {
     total: baselineWaste.total_monthly - currentWaste.total_monthly,
   } : null;
 
-  return { currentWaste, baselineWaste, savings };
+  return { currentWaste, baselineWaste, savings, resetBaseline };
 }

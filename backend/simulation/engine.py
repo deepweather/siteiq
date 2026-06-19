@@ -6,16 +6,20 @@ from config import (
     MAX_TRAIL_LENGTH, SIM_TICK_INTERVAL, ANALYTICS_UPDATE_INTERVAL,
 )
 from models.assets import WorkerState
-from simulation.site_factory import create_initial_site
+from simulation.site_factory import create_initial_site, create_site_from_template
 from simulation.worker_behavior import update_worker
 from simulation.equipment_behavior import update_equipment
 
 
 class SimulationEngine:
-    def __init__(self):
-        self.site, self.assets, self.worker_internals = create_initial_site()
-        self.sim_time: float = WORKDAY_START + 2 * 3600  # start at 08:00 so some data exists
-        self.sim_day: int = 47
+    def __init__(self, project_id: str = "westhafen"):
+        self.project_id = project_id
+        self._init_from_project(project_id)
+
+    def _init_from_project(self, project_id: str):
+        self.site, self.assets, self.worker_internals = create_site_from_template(project_id)
+        self.sim_time: float = WORKDAY_START + 2 * 3600
+        self.sim_day: int = self.site.current_day
         self.speed_multiplier: float = 1.0
         self.paused: bool = False
         self.position_history: dict[str, deque] = {}
@@ -26,6 +30,10 @@ class SimulationEngine:
             if a.type == "worker":
                 self.position_history[a.id] = deque(maxlen=MAX_TRAIL_LENGTH)
             self.activity_log[a.id] = deque(maxlen=50)
+
+    def load_project(self, project_id: str):
+        self.project_id = project_id
+        self._init_from_project(project_id)
 
     def log_activity(self, asset_id: str, event: str):
         self.activity_log.setdefault(asset_id, deque(maxlen=50)).append({

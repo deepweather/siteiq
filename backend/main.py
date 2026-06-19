@@ -17,6 +17,8 @@ from optimization.material_staging import optimize_material_staging
 from optimization.equipment_schedule import optimize_equipment
 from api.routes import router as api_router, init_routes
 from api.websocket import router as ws_router, init_ws
+from api.camera import router as camera_router, init_camera
+from vision.detector import VideoDetector
 
 engine: SimulationEngine | None = None
 latest_analytics = None
@@ -63,12 +65,18 @@ async def lifespan(app: FastAPI):
     engine = SimulationEngine()
     init_routes(engine, get_recommendations)
     init_ws(engine, get_latest_analytics)
+
+    detector = VideoDetector()
+    init_camera(detector)
+    print(f"Vision: loaded {len(detector.get_video_ids())} camera feeds: {detector.get_video_ids()}")
+
     sim_task = asyncio.create_task(run_simulation_loop(engine))
     analytics_task = asyncio.create_task(run_analytics_loop(engine))
     yield
     engine.running = False
     sim_task.cancel()
     analytics_task.cancel()
+    detector.cleanup()
 
 
 app = FastAPI(title="SiteIQ Backend", lifespan=lifespan)
@@ -83,3 +91,4 @@ app.add_middleware(
 
 app.include_router(api_router)
 app.include_router(ws_router)
+app.include_router(camera_router)

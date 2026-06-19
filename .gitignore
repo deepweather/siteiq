@@ -20,3 +20,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Video files (large)
+*.mp4
+
+# YOLO model weights
+*.pt

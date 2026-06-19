@@ -5,6 +5,7 @@ import type { Recommendation } from '../../types/analytics';
 import { Toggle } from '../common/Toggle';
 import { renderFrame } from './renderer';
 import { CameraFeed } from './CameraFeed';
+import { useEffect } from 'react';
 
 interface SiteMapProps {
   zones: Zone[];
@@ -25,6 +26,16 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, re
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showRecs, setShowRecs] = useState(true);
   const [showCameras, setShowCameras] = useState(false);
+  const [cameraIds, setCameraIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (showCameras && cameraIds.length === 0) {
+      fetch('http://localhost:8000/api/cameras')
+        .then(r => r.json())
+        .then((cams: { id: string }[]) => setCameraIds(cams.map(c => c.id)))
+        .catch(() => {});
+    }
+  }, [showCameras, cameraIds.length]);
 
   const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
   const dragRef = useRef<{ active: boolean; moved: boolean; startX: number; startY: number; startPanX: number; startPanY: number }>({
@@ -242,11 +253,16 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, re
         <div ref={containerRef} className="flex-1 relative">
           <canvas ref={canvasRef} className="absolute inset-0" />
         </div>
-        {showCameras && (
-          <div className="h-[160px] shrink-0 border-t border-border bg-black flex gap-px">
-            <CameraFeed assetsRef={assetsRef} cameraId={0} />
-            <CameraFeed assetsRef={assetsRef} cameraId={1} />
-            <CameraFeed assetsRef={assetsRef} cameraId={2} />
+        {showCameras && cameraIds.length > 0 && (
+          <div className="h-[180px] shrink-0 border-t border-border bg-black flex gap-px">
+            {cameraIds.map((id, i) => (
+              <CameraFeed key={id} videoId={id} label={`CAM ${i + 1}`} />
+            ))}
+          </div>
+        )}
+        {showCameras && cameraIds.length === 0 && (
+          <div className="h-[180px] shrink-0 border-t border-border bg-black flex items-center justify-center">
+            <span className="text-zinc-500 text-xs">No camera feeds available. Add .mp4 files to backend/vision/videos/</span>
           </div>
         )}
       </div>

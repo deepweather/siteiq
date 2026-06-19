@@ -5,7 +5,6 @@ import type { Recommendation } from '../../types/analytics';
 import { Toggle } from '../common/Toggle';
 import { renderFrame } from './renderer';
 import { CameraFeed } from './CameraFeed';
-import { useEffect } from 'react';
 
 interface SiteMapProps {
   zones: Zone[];

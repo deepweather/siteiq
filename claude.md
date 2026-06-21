@@ -8,9 +8,21 @@ For this demo, a **simulation engine** replaces real camera feeds. The simulatio
 
 ## Architecture overview
 
-Two disconnected systems exist today:
+Two disconnected systems exist today, gated by a self-hosted auth layer:
 
 ```
+                              ┌────────── Frontend (React Router) ──────────┐
+                              │  Public:                                    │
+                              │   / LandingPage                             │
+                              │   /login /signup /forgot-password           │
+                              │   /reset-password /verify-email             │
+                              │   /accept-invite                            │
+                              │  Gated /app/*  (RequireAuth):               │
+                              │   Dashboard + Settings (Account / Team /    │
+                              │   Workspaces / Sessions)                    │
+                              └────────────────┬────────────────────────────┘
+                                               │ cookie + CSRF
+                                               ▼
 SIMULATION (the demo)                    VISION (disconnected proof-of-concept)
 ┌──────────────────────┐                 ┌─────────────────────────┐
 │ SimulationEngine     │                 │ VideoDetector           │
@@ -21,24 +33,33 @@ SIMULATION (the demo)                    VISION (disconnected proof-of-concept)
 │ - analytics/waste    │                 │                         │
 │ - recommendations    │                 │ Serves: /ws/camera/{id} │
 │                      │                 └─────────────────────────┘
-│ Serves: /ws (10Hz)   │
-│         /api/*       │
-└──────────────────────┘
-         │
-         ▼
-┌──────────────────────┐
-│ Frontend             │
-│ - Canvas site map    │
-│ - Waste/Optimize/    │
-│   Timeline panels    │
-│ - Asset detail       │
-│ - Portfolio view     │
-│ - Camera feeds       │◄── Shows real video with real YOLO boxes,
-│                      │    but detections have ZERO relationship
-└──────────────────────┘    to the simulation workers
+│ Serves: /ws (10Hz)   │                            ▲
+│         /api/*       │                            │ all gated by
+└──────────┬───────────┘                            │ Depends(get_current_org)
+           │ all gated by Depends(get_current_org)  │
+           └────────────────┬───────────────────────┘
+                            │
+                            ▼
+                ┌──────────────────────────────────┐
+                │ FastAPI app                      │
+                │  /auth/*  /api/*  /api/orgs/*    │
+                │  CSRF middleware + Origin check  │
+                │  CORS  Error envelope handler    │
+                │  app.state: db engine, email     │
+                │  sender, limiter, source, recs   │
+                └──────────────┬───────────────────┘
+                               │
+                               ▼
+                ┌──────────────────────────────────┐
+                │ SQLAlchemy async (SQLite|Postgres)│
+                │ users, orgs, memberships, invites│
+                │ sessions, tokens, outbox, audits │
+                └──────────────────────────────────┘
 ```
 
-**This is the core architectural problem.** The camera feeds and the simulation are not synchronized. A "Worker 34%" detection in the video corresponds to nobody on the 2D map. The product story is "cameras → intelligence → decisions" but the demo shows two unrelated systems side by side.
+The camera feeds and the simulation are still not synchronized — see the
+"Architectural debt" section. The product story is "cameras → intelligence
+→ decisions" but the demo shows two unrelated systems side by side.
 
 ### What "Live Mode" should eventually look like
 
@@ -57,8 +78,11 @@ The simulation engine would be replaced by real detection data projected onto th
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Python 3.13, FastAPI, uvicorn, WebSocket, Pydantic v2 |
+| Backend | Python 3.13, FastAPI, uvicorn, WebSocket, Pydantic v2, pydantic-settings |
+| Persistence | SQLAlchemy 2.0 async, Alembic, aiosqlite (dev/test) / asyncpg (prod) |
+| Auth | argon2-cffi (passwords), opaque server-side sessions, slowapi (rate limit), httpx (Resend) |
 | Frontend | React 19, Vite 8, TypeScript 6, Tailwind CSS 3, HTML5 Canvas |
+| Frontend libs | react-router-dom v6, react-hook-form, zod, @zxcvbn-ts (lazy), sonner |
 | CV | ultralytics (YOLOv8n), opencv-python-headless |
 | Package mgmt | uv (backend), npm (frontend) |
 | Real-time | WebSocket at 10Hz for sim state, ~5Hz for camera frames |
@@ -69,6 +93,7 @@ The simulation engine would be replaced by real detection data projected onto th
 # Backend
 cd backend
 uv sync
+uv run alembic upgrade head           # creates ./siteiq.db on first run
 uv run uvicorn main:app --host 0.0.0.0 --port 8000
 
 # Frontend
@@ -78,7 +103,14 @@ npm run dev
 # → http://localhost:5173
 ```
 
-Camera feeds require .mp4 files in `backend/vision/videos/`. Two Pexels CC0 videos are downloaded but gitignored. YOLO model weights (`yolov8n.pt`) auto-download on first run.
+Settings are read from `backend/.env` (see `backend/.env.example` for every
+`SITEIQ_*` knob). In dev mode the verification + reset emails are persisted
+to the `email_outbox` table and visible at `http://localhost:8000/dev/outbox`
+— no SMTP setup needed.
+
+Camera feeds require .mp4 files in `backend/vision/videos/`. Two Pexels CC0
+videos are downloaded but gitignored. YOLO model weights (`yolov8n.pt`)
+auto-download on first run.
 
 ## Auth, orgs, and persistence
 
@@ -190,7 +222,7 @@ Domain constants only (rates, intervals, sim-clock parameters). Operational knob
 Key tunables: `TOILET_INTERVAL` (7200s = 2h), `MATERIAL_RUN_INTERVAL` (7200s), equipment hourly rates (€180/120/90 for crane/pump/excavator), `SIM_SECONDS_PER_TICK` (30 — each 100ms real tick = 30s sim time at 1× speed).
 
 ### `settings.py`
-`Settings` (pydantic-settings `BaseSettings`) with `SITEIQ_*` env-var overrides for CORS origins, default project, log level/format, YOLO model path, videos dir. Document the knobs in `.env.example`.
+`Settings` (pydantic-settings `BaseSettings`) with `SITEIQ_*` env-var overrides. Beyond CORS / log / YOLO knobs the auth-era fields are: `env` (`dev|prod|test`), `database_url`, `frontend_origin`, `session_secret`, `session_cookie_name`, `session_lifetime_days`, `session_idle_days`, `cookie_domain`, `cookie_secure`, `email_provider` (`console|resend`), `resend_api_key`, `email_from`, `rate_limit_redis_url`. Convenience properties: `is_prod`, `is_dev`, `effective_cookie_secure` (defaults to `True` in prod, `False` in dev). Documented in `backend/.env.example`.
 
 ### `logging_config.py`
 `configure(level, fmt)` installs one stream handler on the root logger. `fmt="json"` swaps in `python-json-logger`'s `JsonFormatter`. Idempotent — safe to call repeatedly. Every backend module uses `logging.getLogger(__name__)`. Zero `print(...)` calls; zero bare `except Exception: pass` (guardrail tests in `test_logging.py`).
@@ -232,23 +264,25 @@ All take `source: SiteStateSource`.
 - **`recommendation_service.py`** — `RecommendationService(source, optimizers=…)`. Owns the recommendation cache; tracks the project id of the cached set and auto-invalidates on mismatch. `get()`, `clear()`, `mark_dirty()`, `by_id()`. Constructed once per app at lifespan startup, injected via `Depends(get_rec_service)`.
 
 ### `api/`
-- **`deps.py`** — `get_source`, `get_rec_service`, `get_detector` — FastAPI dependency providers that read from `request.app.state` and raise 503 if the dependency isn't ready.
-- **`routes.py`** — REST routes, all dependencies via `Depends(...)`. GET `/api/projects`, `/api/portfolio`, `/api/site`, `/api/recommendations`, `/api/assets/{id}`, `/api/simulation/state`. POST `/api/projects/{id}/load`, `/api/recommendations/{id}/apply`, `/api/recommendations/apply-all`, `/api/simulation/speed`, `/api/simulation/pause`. Sim-only controls (`/api/simulation/*`, project switch) return 501 if the source isn't a `SimulationEngine`.
-- **`websocket.py`** — WS `/ws` streams `state_update` at 10Hz (assets + trails + latest analytics). Analytics value refreshes ~1×/s via the analytics loop.
-- **`camera.py`** — GET `/api/cameras` lists video feeds. WS `/ws/camera/{video_id}` streams YOLO-processed frames at ~5Hz via `asyncio.to_thread()` so inference doesn't stall the event loop. Errors logged via `logger.exception("camera_stream_error", extra={"video_id": ...})`.
+- **`deps.py`** — FastAPI dependency providers. Domain: `get_source`, `get_rec_service`, `get_detector`, `get_analytics`, `get_settings`, `get_email_sender` (all 503 if `app.state` isn't ready). Auth: `get_optional_session`, `get_current_session`, `get_current_user`, `get_current_org`, `get_current_membership`, `require_role(min: Role)` (closure-style Depends, returns 403 below threshold).
+- **`routes.py`** — REST routes, all wrapped in `Depends(get_current_org)`. GET `/api/projects`, `/api/portfolio`, `/api/site`, `/api/recommendations`, `/api/assets/{id}`, `/api/simulation/state`, `/api/simulation/heatmap`. POST `/api/projects/{id}/load`, `/api/recommendations/{id}/apply`, `/api/recommendations/apply-all`, `/api/simulation/speed`, `/api/simulation/pause`. Sim-only controls return 501 if the source isn't a `SimulationEngine`.
+- **`websocket.py`** — WS `/ws` streams `state_update` at 10Hz (assets + trails + latest analytics). Auth: cookie + origin checked at upgrade via `api/ws_auth.py`.
+- **`camera.py`** — GET `/api/cameras` lists video feeds. WS `/ws/camera/{video_id}` streams YOLO-processed frames at ~5Hz via `asyncio.to_thread()` so inference doesn't stall the event loop. Same cookie + origin check as `/ws`.
+- **`ws_auth.py`** — `authenticate_ws(websocket)`: rejects unknown Origins with close code 4403, missing/invalid session with 4401. Shared by both WebSocket endpoints.
+- **`dev.py`** — `/dev/outbox` (mounted only when `env=dev`). Lists the most recent 100 emails for inspection during development; matching `/dev/outbox/{id}/html` serves the rendered email body.
 
 ### `vision/`
 - **`detector.py`** — `VideoDetector` wraps YOLOv8n. Loads all .mp4 from `vision/videos/`, reads frames with OpenCV, runs inference (conf=0.20), returns base64 JPEG + normalized bounding boxes. CLASS_REMAP maps COCO classes to construction labels ("person" → "Worker"). ~18ms inference per frame on Apple Silicon.
 
 ### `main.py`
-Thin composition root. `create_app(settings=None)` builds an isolated FastAPI app (tests can pass custom settings). Lifespan handler constructs `SimulationEngine` + `RecommendationService` + `VideoDetector`, stashes them on `app.state`, spawns `run_simulation_loop` and `_run_analytics_loop`, then teardown on yield. No module-level globals.
+Thin composition root. `create_app(settings=None)` builds an isolated FastAPI app (tests can pass custom settings). Lifespan handler constructs the async DB engine + session factory, the `EmailSender` (Console or Resend), the slowapi limiter, the `SimulationEngine`, the `RecommendationService` and the `VideoDetector` — all attached to `app.state`. Then spawns `run_simulation_loop` + `_run_analytics_loop`. Middleware order: CORS → CSRF (double-submit cookie + Origin allow-list, exempts `/auth/csrf` + `/ws/*`) → routers (`/auth`, `/api/orgs`, `/api`, `/ws`, `/ws/camera`, plus `/dev/*` only in dev). A custom exception handler converts `HTTPException` and `RequestValidationError` into the standard `{error: {code, message, field?}}` envelope. No module-level globals.
 
 ## Test suite
 
 | Suite | File | Count | Covers |
 |---|---|---|---|
 | Bug regressions | `tests/test_bug_fixes.py` | 19 | Bugs #1, #11, #12, #16-#28 |
-| HTTP API | `tests/test_api.py` | 9 | All REST endpoints via TestClient |
+| HTTP API | `tests/test_api.py` | 9 | All REST endpoints via TestClient (with auth fixture) |
 | Async / YOLO offload | `tests/test_event_loop.py` | 2 | Bug #2 |
 | Edge cases | `tests/test_edge_cases.py` | 14 | Long sim, project flipping, etc. |
 | `SiteStateSource` Protocol | `tests/test_state_source.py` | 9 | Consumers depend only on Protocol |
@@ -259,19 +293,35 @@ Thin composition root. `create_app(settings=None)` builds an isolated FastAPI ap
 | Engine index perf | `tests/test_engine_perf.py` | 6 | O(1) lookups, project-switch invalidation |
 | `Settings` | `tests/test_settings.py` | 8 | Env overrides, validation |
 | Logging | `tests/test_logging.py` | 7 | No prints, no bare excepts, structured fields |
-| **Total backend** | | **117** | |
-| Frontend | `frontend/src/**/*.test.{ts,tsx}` | 30 | |
-| **Total** | | **147** | |
+| Heatmap | `tests/test_heatmap.py` | 7 | Density grid + sparse encoding |
+| DB engine + migrations | `tests/test_db.py` | 3 | URL switching, Alembic upgrade clean on SQLite |
+| argon2 passwords | `tests/test_auth_passwords.py` | 4 | Round-trip, bad-password rejection, salt uniqueness |
+| `/auth/*` routes | `tests/test_auth_routes.py` | 11 | Signup/login/logout, CSRF, verify, reset, sessions |
+| `/api/orgs/*` routes | `tests/test_orgs.py` | 7 | Auto-org-on-signup, invites, role gating, audit |
+| `EmailSender` | `tests/test_email_sender.py` | 4 | Console outbox + Resend httpx_mock + 5xx |
+| AuthZ | `tests/test_authz.py` | 3 | 401 without cookie, role gates 403 |
+| **Total backend** | | **156** | |
+| Frontend | `frontend/src/**/*.test.{ts,tsx}` | 52 | Sim canvas + auth (AuthProvider, RequireAuth), api.ts |
+| **Total** | | **208** | |
 
 Mypy strict scoped to `simulation/worker_internals.py`, `simulation/worker_behavior.py`, `state/source.py` — clean.
+
+`tests/conftest.py` exposes:
+- `engine` / `frankfurt_engine` / `munich_engine` — fresh `SimulationEngine` instances.
+- `app_settings` — `Settings` pointing at a per-test SQLite file with `env=dev`.
+- `app_factory` / `client` — applies migrations, swaps in the no-op detector + `cheap_hasher` for argon2, builds a `TestClient`.
+- `auth_client` — `client` with a real signed-up user + session cookie + CSRF header preset; the standard fixture for auth-gated routes.
+- `authenticate(client)` / `setup_test_db(url)` — helpers for tests that build their own app variants (e.g. `test_di`, `test_settings`).
 
 ## Frontend modules
 
 ### State management
-- `useWebSocket` — connects to ws://localhost:8000/ws, stores assets + trails in **refs** (not state) for canvas performance. Only analytics, simTime, simDay trigger React re-renders.
-- `useSimulation` — fetches /api/site on mount. `reload()` re-fetches after project switch.
+- `App.tsx` is now a `BrowserRouter`. The simulation app body lives in `pages/Dashboard.tsx`, mounted at `/app` behind `<RequireAuth>`.
+- `lib/auth/AuthProvider` — context that boots via `GET /auth/me`, exposes `useAuth()` (`status`, `user`, `org`, `memberships`, `refresh`, `setMe`) everywhere. `RequireAuth` redirects to `/login?next=…`; `RequireRole` shows an "Access denied" panel if below threshold.
+- `useWebSocket` — connects to `${WS_BASE}/ws`, stores assets + trails in **refs** (not state) for canvas performance. Only analytics, simTime, simDay trigger React re-renders.
+- `useSimulation` — fetches `/api/site` on mount. `reload()` re-fetches after project switch.
 - `useAnalytics` — captures first analytics as baseline, computes savings delta. `resetBaseline()` clears on project switch.
-- Recommendations fetched in `App.tsx` via useEffect + 5s polling (not inside the Optimize tab component).
+- Recommendations fetched in `Dashboard.tsx` via useEffect + 5s polling (not inside the Optimize tab component). The dashboard also resets selection / recs / baseline whenever the active org id changes.
 
 ### Canvas rendering (`renderer.ts`, 768 lines)
 Module-level coordinate helpers `px()`, `py()`, `ps()` set from scale/offset each frame. Draws in order: ground → roads → fence → zone structures (phase-specific: excavation contours, foundation grids, structural columns, MEP conduit routes, finishes partitions) → heatmap → trails → materials → facilities → equipment → workers → recommendation arrows → selection highlight → scale bar → legend.
@@ -417,14 +467,59 @@ debt items 33–38 remain open.
 
 ### Architectural debt (still open)
 
-33. **Camera feeds are disconnected from simulation** — the core coherence problem. See architecture section above.
+33. **Camera feeds are disconnected from simulation** — the core coherence problem. See architecture section above. The `SiteStateSource` Protocol seam already supports a future `LiveSource` that would replace the simulation engine with calibrated YOLO detections projected onto the 2D map.
 34. **Timeline lookahead is hardcoded** — static text in `Timeline.tsx`, not driven by simulation state. Damages trust if questioned.
 35. **Portfolio waste estimates are rough** — uses a fixed formula (`workers * 50 * 0.12 * 22 + equipment * 150 * 0.4 * 11 * 22`), not actual simulation data per project.
-36. **CORS hardcoded** to localhost:5173 and :5174 only.
-37. **No tests** — `tests/__init__.py` exists but is empty.
-38. **No auth, no persistence, no database** — demo only. All state is in-memory and resets on restart.
+36. **Per-org custom projects deferred.** The 3 `PROJECT_TEMPLATES` are still shared across orgs (one global `SimulationEngine`). Schema reserves space for `org_projects` later; `get_current_org` only gates access — it does not yet route to a per-org engine.
+37. **No 2FA UI yet.** The `users.totp_secret` column exists; the UI is intentionally hidden behind a future feature flag.
+38. **No billing.** `orgs.plan` exists (`trial|pro|enterprise`) but Stripe integration is a separate plan.
+
+### Resolved in the auth/orgs PR (2026-06-21)
+
+- ~~**CORS hardcoded** to localhost:5173/5174~~ — `SITEIQ_CORS_ORIGINS` (comma-separated env var) drives the allow-list.
+- ~~**No tests** — empty `tests/__init__.py`~~ — backend is at 156 tests across 19 suites, frontend at 52.
+- ~~**No auth, no persistence, no database**~~ — full self-hosted auth + SQLAlchemy/Alembic/SQLite-or-Postgres + audit log. See "Auth, orgs, and persistence" above.
 
 ### API route → frontend mapping (verified)
+
+Every `/api/*` route below is wrapped in `Depends(get_current_org)` and
+returns the standard `{error: {code, message, field?}}` envelope on failure.
+Mutating requests carry `credentials: 'include'` + `X-CSRF-Token`.
+
+**Auth**
+
+| Backend route | Method | Frontend caller | Notes |
+|--------------|--------|----------------|-------|
+| `/auth/csrf` | GET | `services/api.ts` (auto) | Sets `siteiq_csrf` cookie + returns body token; cached client-side |
+| `/auth/me` | GET | `AuthProvider` boot | Returns `{user, org, memberships}` — `null`s when anonymous |
+| `/auth/signup` | POST | `SignupPage` | Creates user + org (owner) + session; sends verification email |
+| `/auth/login` | POST | `LoginPage` | Returns `MeResponse` and sets session cookie |
+| `/auth/logout` | POST | `SettingsLayout` | Revokes the active session, clears cookie + CSRF cache |
+| `/auth/forgot-password` | POST | `ForgotPasswordPage` | Always 200 — never reveals whether the email exists |
+| `/auth/reset-password` | POST | `ResetPasswordPage` | Consumes single-use token, revokes all sessions, issues a fresh one |
+| `/auth/verify-email` | POST | `VerifyEmailPage` | Single-use token, 24h TTL |
+| `/auth/resend-verification` | POST | `AccountSettings` | No-op if already verified |
+| `/auth/change-password` | POST | `AccountSettings` | Revokes every other session for the user |
+| `/auth/sessions` | GET | `Sessions` | Live (non-revoked, non-expired) sessions for the current user |
+| `/auth/sessions/{id}/revoke` | POST | `Sessions` | Per-device revoke |
+| `/auth/sessions/revoke-all` | POST | `Sessions` | Sign out everywhere; reissues current cookie |
+
+**Orgs**
+
+| Backend route | Method | Frontend caller | Notes |
+|--------------|--------|----------------|-------|
+| `/api/orgs` | GET | `OrgSwitcher` | All memberships for current user |
+| `/api/orgs/switch` | POST | `OrgSwitcher`, `AcceptInvitePage` | Sets `auth_sessions.current_org_id` |
+| `/api/orgs/current/members` | GET | `TeamSettings` | member+ |
+| `/api/orgs/current/invites` | GET | `TeamSettings` | admin+ |
+| `/api/orgs/current/invites` | POST | `TeamSettings` | admin+; sends invite email |
+| `/api/orgs/accept-invite` | POST | `AcceptInvitePage` | Token + email-match check |
+| `/api/orgs/current/members/{user_id}` | PATCH | `TeamSettings` | admin+; only owners can touch owner roles |
+| `/api/orgs/current/members/{user_id}` | DELETE | `TeamSettings` | admin+ |
+| `/api/orgs/current/leave` | POST | `Settings` (future) | Last-owner protection |
+| `/api/orgs/current/audit` | GET | `TeamSettings` | owner only |
+
+**Simulation (gated by current org)**
 
 | Backend route | Method | Frontend caller | Notes |
 |--------------|--------|----------------|-------|
@@ -432,16 +527,24 @@ debt items 33–38 remain open.
 | `/api/projects/{id}/load` | POST | `TopBar.tsx` via `loadProject()` | On project switch |
 | `/api/portfolio` | GET | `Portfolio.tsx` via `fetchPortfolio()` | On mount |
 | `/api/site` | GET | `useSimulation.ts` via `fetchSite()` | On mount + reload |
-| `/api/recommendations` | GET | `App.tsx` via `fetchRecommendations()` | 5s polling |
+| `/api/recommendations` | GET | `Dashboard.tsx` via `fetchRecommendations()` | 5s polling |
 | `/api/recommendations/{id}/apply` | POST | `Recommendations.tsx` via `applyRecommendation()` | On click |
 | `/api/recommendations/apply-all` | POST | `Recommendations.tsx` via `applyAllRecommendations()` | On click |
 | `/api/assets/{id}` | GET | `AssetDetail.tsx` via `fetchAssetDetail()` | 1.5s polling when selected |
 | `/api/simulation/speed` | POST | `TopBar.tsx` via `setSimSpeed()` | On speed button click |
 | `/api/simulation/pause` | POST | `TopBar.tsx` via `togglePause()` | On pause button click |
 | `/api/simulation/state` | GET | *unused by frontend* | Exists as fallback, never called |
+| `/api/simulation/heatmap` | GET | `SiteMap.tsx` (when toggled) | Sparse density grid, daily reset |
 | `/api/cameras` | GET | `SiteMap.tsx` inline fetch | When cameras toggle enabled |
-| `/ws` | WS | `useWebSocket.ts` | 10Hz sim state stream |
-| `/ws/camera/{id}` | WS | `CameraFeed.tsx` | ~5Hz YOLO frame stream |
+| `/ws` | WS | `useWebSocket.ts` | 10Hz sim state stream; cookie + Origin checked at upgrade |
+| `/ws/camera/{id}` | WS | `CameraFeed.tsx` | ~5Hz YOLO frame stream; same cookie + Origin check |
+
+**Dev only (`SITEIQ_ENV=dev`)**
+
+| Backend route | Method | Purpose |
+|--------------|--------|---------|
+| `/dev/outbox` | GET | Lists last 100 emails (verification links, reset tokens, invites) |
+| `/dev/outbox/{id}/html` | GET | Renders the HTML body for inspection |
 
 ## Target waste metrics (tuned and verified)
 

@@ -195,9 +195,37 @@ Light theme using HSL CSS custom properties (shadcn-style tokens). Primary = ora
 
 ### Additional frontend issues
 
-14. **CameraFeed runs 60fps RAF loop for 5fps content.** Redraws every frame even when no new video data arrived. 55/60 frames are wasted.
+14. **CameraFeed RAF loop restarts 5x/sec.** `useEffect` deps include `detectionCount` and `inferenceMs` (state), which update on every WS message. The effect tears down and recreates the RAF loop each time, causing flicker. Should use refs.
 
-15. **AssetDetail zone name is reformatted ID, not actual label.** Line 96: `zone-a` becomes `ZONE A` instead of showing the zone's real label ("Block A", "Turm Ost").
+15. **CameraFeed has no WebSocket reconnection.** If the WS closes, the feed dies permanently. No retry logic.
+
+16. **AssetDetail zone name is reformatted ID, not actual label.** `zone-a` becomes "ZONE A" instead of the zone's real label.
+
+17. **MaterialDetail zone name regex doesn't capitalize zone letter.** `'zone-c'.replace('zone-', 'Zone ').replace(/^\w/, ...)` produces "Zone c" — the regex only matches the start of string ("Z"), not the zone letter.
+
+18. **EquipmentDetail duty cycle progress bar is wrong during idle.** `cycle_timer_s / operate_duration_s` — during idle phase the timer counts toward `idle_duration_s` but divides by `operate_duration_s`. Exceeds 100% for equipment with idle > operate duration.
+
+19. **`onMouseUp` doesn't restore cursor to `grab`.** Cursor stays `grabbing` after mouseup until the next mousemove triggers hover check.
+
+20. **`onMouseMove` registered on both canvas AND window.** Double hit-test on every mouse move when over canvas (iterates 62 assets twice at 60fps).
+
+21. **`AssetUpdate` type missing `assigned_zone`.** Backend sends it, frontend type doesn't declare it.
+
+22. **`formatCurrencyCompact` exported but never used.**
+
+### Backend logic issues found on full read
+
+23. **`equipment_schedule.py` `daily_idle_hours` formula is unstable.** `hours_idle * (11.0 / total)` — when `total` is small (early sim), this inflates massively. Should use `(1 - utilization) * 11.0`.
+
+24. **`equipment_schedule.py` hardcodes fallback zone "D".** `asset.assigned_zone or 'D'` — equipment never has `assigned_zone` set, so every equipment description says "Zone D".
+
+25. **`material_staging.py` picks zone edge nearest to center, not to material.** The "optimal" position is always the edge with the shortest distance to the zone's own center, which is always the shorter dimension. Should minimize distance from material's current position or from workers.
+
+26. **Facility detail only checks toilet/breakroom.** `get_asset_detail` office and toolcrib subtypes never match any condition, so `workers_present` is always empty for them.
+
+27. **`EquipmentState.REPOSITIONING` defined but never used.** Dead enum value.
+
+28. **`Recommendation.from_position` and `to_position` are untyped `dict`.** Should be `dict[str, float]` or a proper model.
 
 ### Dead code
 

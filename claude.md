@@ -177,12 +177,34 @@ Light theme using HSL CSS custom properties (shadcn-style tokens). Primary = ora
 
 8. **Portfolio ROI uses hardcoded 0.65 recovery factor.** `Portfolio.tsx` line 89: `totalWaste * 0.65 / systemCostTotal`. This magic number is disconnected from actual optimization savings.
 
+### Renderer bugs (`renderer.ts`)
+
+9. **`ctx.measureText` before `ctx.font` in zone labels.** Line 150 measures text with the font from the previous draw call, not the zone label font set on line 154. Zone label backgrounds may be wrong width.
+
+10. **Module-level mutable state (`S`, `OX`, `OY`).** Lines 12-14 — global variables stomped on every `renderFrame` call. Would break if two canvases rendered simultaneously.
+
+### Simulation logic bugs
+
+11. **Worker gets permanently stuck if no facility exists.** `worker_behavior.py` lines 84-116: if `_find_nearest` returns `None`, the timer check passes but the `return` still executes. The timer stays negative forever, so the worker can never reach the material or break checks below. Every tick hits the same failing toilet check and returns.
+
+12. **k-means toilet assignment is order-based, not distance-based.** `facility_placement.py` line 69: toilet-1 always gets cluster 0, toilet-2 gets cluster 1, regardless of which toilet is closer to which cluster centroid. Can recommend longer moves than necessary.
+
+### Timeline bugs
+
+13. **Timeline hardcodes zone IDs and TOTAL_DAYS=120.** `Timeline.tsx` lines 9-16: zone IDs are `['zone-a'...'zone-e']` — misses `zone-f` in Frankfurt. Labels show "Zone A" instead of actual zone names ("Turm Ost"). TOTAL_DAYS=120 overflows for the Munich bridge project (runs to day 210, current day 135 is off-screen).
+
+### Additional frontend issues
+
+14. **CameraFeed runs 60fps RAF loop for 5fps content.** Redraws every frame even when no new video data arrived. 55/60 frames are wasted.
+
+15. **AssetDetail zone name is reformatted ID, not actual label.** Line 96: `zone-a` becomes `ZONE A` instead of showing the zone's real label ("Block A", "Turm Ost").
+
 ### Dead code
 
-9. **`CONSTRUCTION_CLASSES` dict in `detector.py`** (lines 11-22) — defined but never referenced. The model uses `self.model.names[cls_id]` directly.
-10. **`_recommendations_cache` in `routes.py`** (line 8) — declared and cleared in `load_project` but never read by anything. The actual cache is in `main.py`.
-11. **`_find_nearest_facility` in `travel.py`** — defined but never called.
-12. **`MetricCard.tsx`** — component defined but never imported anywhere.
+16. **`CONSTRUCTION_CLASSES` dict in `detector.py`** (lines 11-22) — defined but never referenced.
+17. **`_recommendations_cache` in `routes.py`** (line 8) — declared and cleared in `load_project` but never read.
+18. **`_find_nearest_facility` in `travel.py`** — defined but never called.
+19. **`MetricCard.tsx`** — component defined but never imported.
 
 ### Architectural debt
 

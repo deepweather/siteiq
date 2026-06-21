@@ -172,6 +172,42 @@ cancelled task before disposing the DB engine — without that drain,
 an in-flight cleanup can race the engine shutdown and the lifespan
 never returns.
 
+### Health endpoints
+- `GET /healthz` — liveness, returns 200 + `{"status": "ok"}` while the
+  process is up. Used by the Dockerfile + docker-compose healthchecks.
+- `GET /readyz` — readiness, returns 200 only when the DB is reachable
+  AND the simulation registry is initialised. 503 otherwise so traffic
+  is held off briefly during startup. Both are unauthenticated and
+  GET-only (so they sail past CSRF).
+
+### Magic-link login
+Passwordless alternative auth path. `POST /auth/request-magic-link`
+(rate-limited, silent on unknown emails) drops a 15-minute single-use
+token in the user's email. `POST /auth/login-with-token` consumes the
+token, sets a session cookie, and returns the same `MeResponse` as a
+password login. UI lives at `/magic-link` (form + token-consumer in
+the same page) and is reachable from `LoginPage` ("Email me a sign-in
+link"). Replays are rejected as `token_used`.
+
+### Audit log CSV export
+`GET /api/orgs/current/audit.csv?since=…&until=…` streams up to 10k
+rows of audit events as RFC 4180 CSV. Owner-only. The frontend Team
+settings page links via `<a download href={orgs.auditCsvUrl()}>` so
+the browser handles the file save with the auth cookie attached. Bad
+timestamps return the standard `{error: {code: "invalid_timestamp",
+field}}` envelope.
+
+### Frontend resilience
+- `src/lib/ErrorBoundary.tsx` wraps the entire router. Anything thrown
+  during render or in a lifecycle phase becomes a clean recovery card
+  with the stack trace + a Reload button (no blank page).
+- `src/hooks/useConnectionToast.ts` watches the WS `connected` flag.
+  After a 2s grace, drops a sticky "Reconnecting…" toast; on reconnect
+  it auto-replaces with a 2.5s "Live again" success.
+- All routes are split via `React.lazy` + `Suspense`. Initial bundle
+  is ~243 KB (was 434 KB pre-split). Each settings page is ~1–8 KB
+  on its own.
+
 ### Per-org simulation engines
 
 `backend/state/registry.py` is the registry for `SimulationEngine` +
@@ -389,9 +425,12 @@ Thin composition root. `create_app(settings=None)` builds an isolated FastAPI ap
 | Outbox cleanup | `tests/test_outbox_cleanup.py` | 2 | Old rows deleted, retention=0 disables |
 | Account + org deletion | `tests/test_deletion.py` | 6 | Password gate, last-owner cascade, name-mismatch confirm |
 | Per-org simulation | `tests/test_per_org_engine.py` | 2 | Two orgs see independent sites; deletion discards engine |
-| **Total backend** | | **172** | |
+| Health endpoints | `tests/test_health.py` | 3 | /healthz cheap; /readyz green/red on DB |
+| Magic-link login | `tests/test_magic_link.py` | 4 | Silent-on-unknown, single-use, replay rejected, round-trip |
+| Audit CSV export | `tests/test_audit_export.py` | 3 | Owner can download, admin gated, bad timestamp 400 |
+| **Total backend** | | **182** | |
 | Frontend | `frontend/src/**/*.test.{ts,tsx}` | 52 | Sim canvas + auth (AuthProvider, RequireAuth), api.ts |
-| **Total** | | **224** | |
+| **Total** | | **234** | |
 
 Mypy strict scoped to `simulation/worker_internals.py`, `simulation/worker_behavior.py`, `state/source.py` — clean.
 
@@ -576,6 +615,12 @@ debt items 33–38 remain open.
 - ~~**No rate limits**~~ — slowapi on `/auth/login` (10/min), `/auth/signup` + `/auth/forgot-password` (5/hr), Redis-ready storage.
 - ~~**No password breach check**~~ — HIBP k-anonymity in `PasswordField` (only first 5 hex of SHA-1 leaves the browser).
 - ~~**Email outbox grew forever**~~ — periodic cleanup task with configurable TTL.
+- ~~**No health endpoints**~~ — `/healthz` + `/readyz` (DB ping + registry check); Dockerfile healthcheck switched to `/readyz`.
+- ~~**Frontend was a single 434 KB bundle**~~ — `React.lazy` route splits; entry chunk down to 243 KB, individual pages 1–8 KB.
+- ~~**Silent UI errors took down the whole app**~~ — top-level `ErrorBoundary` shows a recovery card with the stack and a Reload button.
+- ~~**WS drops were silently shown as a colored pill**~~ — `useConnectionToast` shows "Reconnecting…" / "Live again" after a grace window.
+- ~~**Password-only login**~~ — magic-link via `/auth/request-magic-link` + `/auth/login-with-token`, 15-min single-use tokens.
+- ~~**No audit log export**~~ — `GET /api/orgs/current/audit.csv` with `since` / `until` query params (RFC 4180, owner-only).
 
 ### API route → frontend mapping (verified)
 

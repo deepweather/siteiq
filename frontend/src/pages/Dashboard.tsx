@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useSimulation } from '../hooks/useSimulation';
 import { useAnalytics } from '../hooks/useAnalytics';
+import { useConnectionToast } from '../hooks/useConnectionToast';
 import { TopBar } from '../components/TopBar/TopBar';
 import { SiteMap } from '../components/SiteMap/SiteMap';
 import { RightPanel } from '../components/RightPanel/RightPanel';
@@ -17,6 +18,7 @@ export default function Dashboard() {
   const nav = useNavigate();
   const { org } = useAuth();
   const { assetsRef, trailsRef, analytics, simTime, simDay, connected } = useWebSocket();
+  useConnectionToast(connected);
   const { site, loading, reload } = useSimulation();
   const { currentWaste, baselineWaste, savings, resetBaseline } = useAnalytics(analytics);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);

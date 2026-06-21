@@ -120,6 +120,10 @@ export const auth = {
   logout: () => postJson<{ status: string }>('/auth/logout').finally(clearCsrfCache),
   forgotPassword: (email: string) =>
     postJson<{ status: string }>('/auth/forgot-password', { email }),
+  requestMagicLink: (email: string) =>
+    postJson<{ status: string }>('/auth/request-magic-link', { email }),
+  loginWithToken: (token: string) =>
+    postJson<MeResponse>('/auth/login-with-token', { token }),
   resetPassword: (token: string, password: string) =>
     postJson<MeResponse>('/auth/reset-password', { token, password }),
   verifyEmail: (token: string) =>
@@ -185,6 +189,15 @@ export const orgs = {
     deleteJson<{ status: string }>(`/api/orgs/current/members/${userId}`),
   leave: () => postJson<{ status: string }>('/api/orgs/current/leave'),
   audit: () => getJson<AuditEvent[]>('/api/orgs/current/audit'),
+  /** URL for the audit-log CSV export. Use with an `<a download>` so
+   *  the browser handles the file save with cookies attached. */
+  auditCsvUrl: (range?: { since?: string; until?: string }): string => {
+    const qs = new URLSearchParams();
+    if (range?.since) qs.set('since', range.since);
+    if (range?.until) qs.set('until', range.until);
+    const tail = qs.toString();
+    return `${API_BASE}/api/orgs/current/audit.csv${tail ? `?${tail}` : ''}`;
+  },
   deleteCurrent: (confirmName: string, currentPassword: string) =>
     deleteJson<{ status: string; org_id: string }>('/api/orgs/current', {
       confirm_name: confirmName,

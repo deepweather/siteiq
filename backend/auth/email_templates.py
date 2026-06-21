@@ -45,6 +45,25 @@ def verify_email(name: str, frontend_origin: str, token: str) -> Tuple[str, str,
     return subject, html, text
 
 
+def magic_link(name: str, frontend_origin: str, token: str) -> Tuple[str, str, str]:
+    link = f"{frontend_origin}/magic-link?token={token}"
+    subject = "Sign in to SiteIQ"
+    text = (
+        f"Hi {name},\n\n"
+        f"Click this link to sign in to SiteIQ. It expires in 15 minutes and "
+        f"can only be used once.\n\n"
+        f"{link}\n\n"
+        f"If you didn't request this, ignore this email.\n"
+    )
+    html = _wrap_html(
+        "Sign in to SiteIQ",
+        f"""<p style="color:#444; line-height:1.5;">Click below to sign in. The link expires in 15 minutes and can only be used once.</p>
+        <p><a href="{link}" style="display:inline-block; background:#ea580c; color:#fff; padding:12px 20px; border-radius:8px; text-decoration:none; font-weight:600;">Sign in</a></p>
+        <p style="font-size:12px; color:#888;">Or paste this URL: <br/>{link}</p>""",
+    )
+    return subject, html, text
+
+
 def password_reset(name: str, frontend_origin: str, token: str) -> Tuple[str, str, str]:
     link = f"{frontend_origin}/reset-password?token={token}"
     subject = "Reset your SiteIQ password"

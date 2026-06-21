@@ -27,6 +27,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from analytics.aggregator import compute_waste_summary
 from api.camera import router as camera_router
 from api.dev import router as dev_router
+from api.health import router as health_router
 from api.routes import router as api_router
 from api.security_headers import SecurityHeadersMiddleware
 from api.websocket import router as ws_router
@@ -214,6 +215,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content={"error": {"code": "validation_error", "message": "Invalid input"}},
         )
 
+    app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(orgs_router)
     app.include_router(api_router)

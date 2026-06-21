@@ -79,7 +79,13 @@ export default function LoginPage() {
           {...register('password')}
           error={errors.password?.message}
         />
-        <div className="flex justify-end mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <Link
+            to="/magic-link"
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            Email me a sign-in link
+          </Link>
           <Link
             to="/forgot-password"
             className="text-xs text-muted-foreground hover:text-foreground"

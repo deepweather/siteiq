@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import select, update
@@ -384,10 +384,24 @@ async def switch_active_org(
     return org
 
 
-async def list_audit_events(db: AsyncSession, *, org_id: str, limit: int = 50) -> list[dict]:
+async def list_audit_events(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    limit: int = 50,
+    since: "datetime | None" = None,
+    until: "datetime | None" = None,
+) -> list[dict]:
+    from sqlalchemy import and_
+
+    conds = [AuditEvent.org_id == org_id]
+    if since is not None:
+        conds.append(AuditEvent.created_at >= since)
+    if until is not None:
+        conds.append(AuditEvent.created_at <= until)
     result = await db.execute(
         select(AuditEvent)
-        .where(AuditEvent.org_id == org_id)
+        .where(and_(*conds))
         .order_by(AuditEvent.created_at.desc())
         .limit(limit)
     )

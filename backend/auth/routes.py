@@ -75,6 +75,14 @@ class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
 
+class MagicLinkRequest(BaseModel):
+    email: EmailStr
+
+
+class LoginWithTokenRequest(BaseModel):
+    token: str
+
+
 class ResetPasswordRequest(BaseModel):
     token: str
     password: str
@@ -292,6 +300,46 @@ async def resend_verification(
 # ---------------------------------------------------------------------------
 # Password reset
 # ---------------------------------------------------------------------------
+
+
+@router.post("/request-magic-link")
+@limiter.limit("5/hour")
+async def request_magic_link(
+    request: Request,
+    body: MagicLinkRequest,
+    db: AsyncSession = Depends(get_db),
+    sender: EmailSender = Depends(get_email_sender),
+):
+    """Email a one-time sign-in link. Always returns 200 — we don't
+    reveal whether the email is registered."""
+    settings = request.app.state.settings
+    await svc.request_magic_link(
+        db, email=body.email, sender=sender, frontend_origin=settings.frontend_origin
+    )
+    return {"status": "ok"}
+
+
+@router.post("/login-with-token")
+async def login_with_token(
+    body: LoginWithTokenRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Consume a magic-link token and issue a fresh session cookie."""
+    settings = request.app.state.settings
+    user = await svc.login_with_magic_link(db, token=body.token)
+    org = await svc.primary_org_for(db, user.id)
+    _, token = await create_session(
+        db,
+        user_id=user.id,
+        org_id=org.id if org else None,
+        user_agent=request.headers.get("user-agent", ""),
+        ip=_client_ip(request),
+        lifetime_days=settings.session_lifetime_days,
+    )
+    set_session_cookie(response, settings, token, settings.session_lifetime_days)
+    return await _build_me(db, user, org.id if org else None)
 
 
 @router.post("/forgot-password")

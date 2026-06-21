@@ -57,6 +57,6 @@ EXPOSE 8000
 # Migrations run on container start, then uvicorn boots. Override
 # SITEIQ_DATABASE_URL to point at Postgres (or another SQLite path).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8000/auth/me >/dev/null || exit 1
+    CMD curl -fsS http://localhost:8000/readyz >/dev/null || exit 1
 
 CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]

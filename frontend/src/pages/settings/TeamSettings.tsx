@@ -197,7 +197,16 @@ export default function TeamSettings() {
 
       {isOwner && audit.length > 0 && (
         <section>
-          <h2 className="text-lg font-semibold tracking-tight mb-3">Audit log</h2>
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="text-lg font-semibold tracking-tight">Audit log</h2>
+            <a
+              href={orgs.auditCsvUrl()}
+              className="text-xs text-muted-foreground hover:text-foreground"
+              download
+            >
+              Download CSV
+            </a>
+          </div>
           <div className="rounded-xl border border-border bg-card divide-y divide-border">
             {audit.slice(0, 20).map((e) => (
               <div key={e.id} className="px-5 py-3 text-sm">

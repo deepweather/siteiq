@@ -55,6 +55,7 @@ class Plan(str, enum.Enum):
 class TokenKind(str, enum.Enum):
     EMAIL_VERIFY = "email_verify"
     PASSWORD_RESET = "password_reset"
+    MAGIC_LINK = "magic_link"
 
 
 class EmailStatus(str, enum.Enum):

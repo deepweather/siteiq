@@ -41,6 +41,7 @@ logger = logging.getLogger("siteiq.auth.service")
 PASSWORD_MIN_LEN = 12
 EMAIL_VERIFY_TTL_HOURS = 24
 PASSWORD_RESET_TTL_MINUTES = 30
+MAGIC_LINK_TTL_MINUTES = 15
 INVITE_TTL_DAYS = 7
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -251,6 +252,51 @@ async def verify_email(db: AsyncSession, *, token: str) -> User:
 # ---------------------------------------------------------------------------
 # Password reset
 # ---------------------------------------------------------------------------
+
+
+async def request_magic_link(
+    db: AsyncSession, *, email: str, sender: EmailSender, frontend_origin: str
+) -> None:
+    """Sends a one-time sign-in link to the given email if the account
+    exists. Always returns silently — same external behavior whether
+    or not the email is registered, so we never leak account
+    existence.
+
+    The token is single-use and expires in MAGIC_LINK_TTL_MINUTES.
+    Consuming it logs the user in without their password.
+    """
+    email_lower = _normalize_email(email)
+    result = await db.execute(select(User).where(User.email_lower == email_lower))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return
+
+    token = generate_token()
+    db.add(
+        VerificationToken(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            kind=TokenKind.MAGIC_LINK.value,
+            token_hash=hash_token(token),
+            expires_at=utc_now() + timedelta(minutes=MAGIC_LINK_TTL_MINUTES),
+        )
+    )
+    await db.flush()
+    subject, html, text = email_templates.magic_link(user.name, frontend_origin, token)
+    await sender.send(db, to=user.email_display, subject=subject, html=html, text=text)
+    await _audit(db, kind="user.magic_link_requested", org_id=None, actor_user_id=user.id)
+
+
+async def login_with_magic_link(db: AsyncSession, *, token: str) -> User:
+    """Consumes a magic-link token and returns the matching user.
+    Caller is responsible for issuing the session cookie."""
+    record = await _consume_token(db, token=token, kind=TokenKind.MAGIC_LINK)
+    user = await db.get(User, record.user_id)
+    if user is None:
+        raise ApiError(404, "user_not_found", "Account not found.")
+    user.last_login_at = utc_now()
+    await _audit(db, kind="user.magic_link_login", org_id=None, actor_user_id=user.id)
+    return user
 
 
 async def request_password_reset(

@@ -221,3 +221,72 @@ async def audit(
     _: OrgMembership = Depends(require_role(Role.OWNER)),
 ):
     return await svc.list_audit_events(db, org_id=org.id)
+
+
+@router.get("/current/audit.csv")
+async def audit_csv(
+    since: str | None = None,
+    until: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    org: Org = Depends(get_current_org),
+    _: OrgMembership = Depends(require_role(Role.OWNER)),
+):
+    """Stream the audit log as RFC 4180 CSV. Owner-only.
+
+    Query params: `since` and `until` are ISO-8601 timestamps. We cap
+    the export at 10_000 rows; for anything bigger you'd want a real
+    background job + signed-URL flow.
+    """
+    from datetime import datetime
+    from fastapi.responses import StreamingResponse
+    import csv
+    import io
+    import json
+
+    def _parse(ts: str | None):
+        if ts is None:
+            return None
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            raise ApiError(
+                400,
+                "invalid_timestamp",
+                f"'{ts}' is not a valid ISO-8601 timestamp.",
+                field="since" if since == ts else "until",
+            )
+
+    rows = await svc.list_audit_events(
+        db,
+        org_id=org.id,
+        limit=10_000,
+        since=_parse(since),
+        until=_parse(until),
+    )
+
+    def _stream():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["created_at", "kind", "actor_user_id", "payload_json"])
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate()
+        for r in rows:
+            w.writerow(
+                [
+                    r["created_at"],
+                    r["kind"],
+                    r["actor_user_id"] or "",
+                    json.dumps(r["payload"], separators=(",", ":")),
+                ]
+            )
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate()
+
+    filename = f"siteiq-audit-{org.slug}.csv"
+    return StreamingResponse(
+        _stream(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

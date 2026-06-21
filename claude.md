@@ -157,16 +157,48 @@ Light theme using HSL CSS custom properties (shadcn-style tokens). Primary = ora
 
 ## Known issues and debt
 
-1. **Camera feeds are disconnected from simulation** — the core coherence problem. See architecture section.
-2. **Timeline lookahead is hardcoded** — static text, not driven by simulation state. Damages trust if questioned.
-3. **`_find_nearest_facility` in travel.py** — defined but never called.
-4. **`MetricCard.tsx`** — defined but never imported (dead code).
-5. **`vision/__init__.py`** exists but backend exploration noted it may be missing — verify if import issues arise.
-6. **No tests** — `tests/__init__.py` exists but is empty.
-7. **Portfolio waste estimates are rough** — uses `workers * 50 * 0.12 * 22 + equipment * 150 * 0.4 * 11 * 22`, not actual simulation data.
-8. **CORS hardcoded** to localhost:5173 and :5174 only.
-9. **Single-threaded YOLO inference** in the async event loop — blocks the sim tick while processing video frames. Should run in a thread pool.
-10. **No auth, no persistence, no database** — demo only. All state is in-memory and resets on restart.
+### Bugs (verified by reading every route handler and data flow)
+
+1. **Recommendation cache not cleared on project switch.** `routes.py:load_project()` clears `_recommendations_cache` (a dead module-level var in routes.py, line 8) but the real cache is `cached_recommendations` in `main.py`. The `recs_dirty` flag only flips on the next analytics tick (~1s later). Between project load and that tick, stale recs from the old project can be served. Fix: `main.py:get_recommendations()` should check `engine.project_id` matches the cached project, or `load_project` should call a clear function in main.py.
+
+2. **YOLO inference blocks the async event loop.** `camera.py` line 36 calls `_detector.get_next_frame()` synchronously (~18ms of OpenCV + YOLO per frame, per connected camera). During inference, the entire FastAPI event loop stalls — sim WebSocket pushes, REST endpoints, everything. Fix: wrap in `asyncio.to_thread()`.
+
+3. **No fetch error handling in frontend.** Every function in `api.ts` does `fetch(url).then(r => r.json())` without checking `r.ok` or `r.status`. A backend 500 or network error returns `undefined` which propagates silently through the UI. Any transient failure (e.g., during project switch) can put components into broken states.
+
+### Dead code
+
+4. **`CONSTRUCTION_CLASSES` dict in `detector.py`** (lines 11-22) — defined but never referenced. The model uses `self.model.names[cls_id]` directly.
+5. **`_recommendations_cache` in `routes.py`** (line 8) — declared and cleared in `load_project` but never read by anything. The actual cache is in `main.py`.
+6. **`_find_nearest_facility` in `travel.py`** — defined but never called.
+7. **`MetricCard.tsx`** — component defined but never imported anywhere.
+
+### Architectural debt
+
+8. **Camera feeds are disconnected from simulation** — the core coherence problem. See architecture section above.
+9. **Timeline lookahead is hardcoded** — static text in `Timeline.tsx`, not driven by simulation state. Damages trust if questioned.
+10. **Portfolio waste estimates are rough** — uses a fixed formula (`workers * 50 * 0.12 * 22 + equipment * 150 * 0.4 * 11 * 22`), not actual simulation data per project.
+11. **CORS hardcoded** to localhost:5173 and :5174 only.
+12. **No tests** — `tests/__init__.py` exists but is empty.
+13. **No auth, no persistence, no database** — demo only. All state is in-memory and resets on restart.
+
+### API route → frontend mapping (verified)
+
+| Backend route | Method | Frontend caller | Notes |
+|--------------|--------|----------------|-------|
+| `/api/projects` | GET | `TopBar.tsx` via `fetchProjects()` | On mount |
+| `/api/projects/{id}/load` | POST | `TopBar.tsx` via `loadProject()` | On project switch |
+| `/api/portfolio` | GET | `Portfolio.tsx` via `fetchPortfolio()` | On mount |
+| `/api/site` | GET | `useSimulation.ts` via `fetchSite()` | On mount + reload |
+| `/api/recommendations` | GET | `App.tsx` via `fetchRecommendations()` | 5s polling |
+| `/api/recommendations/{id}/apply` | POST | `Recommendations.tsx` via `applyRecommendation()` | On click |
+| `/api/recommendations/apply-all` | POST | `Recommendations.tsx` via `applyAllRecommendations()` | On click |
+| `/api/assets/{id}` | GET | `AssetDetail.tsx` via `fetchAssetDetail()` | 1.5s polling when selected |
+| `/api/simulation/speed` | POST | `TopBar.tsx` via `setSimSpeed()` | On speed button click |
+| `/api/simulation/pause` | POST | `TopBar.tsx` via `togglePause()` | On pause button click |
+| `/api/simulation/state` | GET | *unused by frontend* | Exists as fallback, never called |
+| `/api/cameras` | GET | `SiteMap.tsx` inline fetch | When cameras toggle enabled |
+| `/ws` | WS | `useWebSocket.ts` | 10Hz sim state stream |
+| `/ws/camera/{id}` | WS | `CameraFeed.tsx` | ~5Hz YOLO frame stream |
 
 ## Target waste metrics (tuned and verified)
 

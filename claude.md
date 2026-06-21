@@ -165,12 +165,24 @@ Light theme using HSL CSS custom properties (shadcn-style tokens). Primary = ora
 
 3. **No fetch error handling in frontend.** Every function in `api.ts` does `fetch(url).then(r => r.json())` without checking `r.ok` or `r.status`. A backend 500 or network error returns `undefined` which propagates silently through the UI. Any transient failure (e.g., during project switch) can put components into broken states.
 
+### Frontend bugs (verified by reading every component)
+
+4. **`justAppliedAll` never resets in `Recommendations.tsx`.** Set to `true` on Apply All (line 27), never set back to `false`. The celebration card stays visible forever — survives rec refreshes and project switches. Only clears on full page reload.
+
+5. **Three hardcoded `localhost:8000` URLs outside `api.ts`.** `useWebSocket.ts` line 28 (`ws://localhost:8000/ws`), `CameraFeed.tsx` (`ws://localhost:8000/ws/camera/...`), `SiteMap.tsx` line 32 (`http://localhost:8000/api/cameras`). The `API_BASE` constant in `api.ts` is not shared with these.
+
+6. **WebSocket reconnect can create duplicate connections.** `useWebSocket.ts` line 26 checks `readyState === OPEN` but a WS in `CONNECTING` state (0) passes the guard, allowing a second `new WebSocket()` before the first resolves.
+
+7. **`handlePortfolioSelect` in `App.tsx` ignores its `projectId` parameter.** Line 50-53: receives `projectId` but only calls `handleProjectChange()` which doesn't use it. The project was already loaded in `Portfolio.tsx` via `loadProject(id)`, so it works, but the parameter is dead.
+
+8. **Portfolio ROI uses hardcoded 0.65 recovery factor.** `Portfolio.tsx` line 89: `totalWaste * 0.65 / systemCostTotal`. This magic number is disconnected from actual optimization savings.
+
 ### Dead code
 
-4. **`CONSTRUCTION_CLASSES` dict in `detector.py`** (lines 11-22) — defined but never referenced. The model uses `self.model.names[cls_id]` directly.
-5. **`_recommendations_cache` in `routes.py`** (line 8) — declared and cleared in `load_project` but never read by anything. The actual cache is in `main.py`.
-6. **`_find_nearest_facility` in `travel.py`** — defined but never called.
-7. **`MetricCard.tsx`** — component defined but never imported anywhere.
+9. **`CONSTRUCTION_CLASSES` dict in `detector.py`** (lines 11-22) — defined but never referenced. The model uses `self.model.names[cls_id]` directly.
+10. **`_recommendations_cache` in `routes.py`** (line 8) — declared and cleared in `load_project` but never read by anything. The actual cache is in `main.py`.
+11. **`_find_nearest_facility` in `travel.py`** — defined but never called.
+12. **`MetricCard.tsx`** — component defined but never imported anywhere.
 
 ### Architectural debt
 

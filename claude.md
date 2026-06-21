@@ -172,6 +172,51 @@ cancelled task before disposing the DB engine — without that drain,
 an in-flight cleanup can race the engine shutdown and the lifespan
 never returns.
 
+### Per-org simulation engines
+
+`backend/state/registry.py` is the registry for `SimulationEngine` +
+`RecommendationService` instances, keyed by `org_id`. The `Depends(get_source)`
+dependency now resolves the active org first and looks up (or
+lazily creates) that org's engine. The simulation tick loop iterates
+every live engine. Side effects:
+
+- Two orgs viewing the dashboard see different sites.
+- WebSocket auth (`api/ws_auth.py`) returns the session's
+  `current_org_id`, and the WS handler uses it to look up the right
+  engine.
+- Account / workspace deletion calls `registry.discard(org_id)` so the
+  engine + analytics + recs are reclaimed immediately.
+
+The `SiteStateSource` Protocol seam still gates everything, so a
+future `LiveSource` (camera-fed) implementation drops in by changing
+only the registry's `EngineFactory`.
+
+### Account + workspace deletion
+
+- `POST /auth/delete-account` — re-supplies the password, then deletes
+  the user. For each org the user owned: if there's another owner,
+  the org survives (only the membership goes); if they were the last
+  owner, the org is deleted entirely (cascade drops memberships,
+  invites, audit_events, and the registry's engine).
+- `DELETE /api/orgs/current` — owner-only. Two confirmations:
+  type the workspace name + re-supply the password. Sessions whose
+  `current_org_id` pointed at the deleted org get nulled — they fall
+  back to another membership next request rather than logging out.
+- Both record `org.deleted` / `user.deleted` audit events before the
+  cascade so an admin can later forensically reconstruct what happened.
+
+### Portfolio waste estimator
+
+`services/portfolio_estimator.py` warms a transient `SimulationEngine`
+per project template at app startup (240 ticks ≈ 2 sim-hours), runs
+`compute_waste_summary` once, caches the result on
+`app.state.portfolio_estimates`. Each `/api/portfolio` card now shows
+real per-project daily/monthly numbers instead of the legacy fixed
+formula. Tests turn the warm-up off via
+`SITEIQ_COMPUTE_PORTFOLIO_AT_STARTUP=false` to keep TestClient
+lifespans fast (this means tests fall back to the legacy formula —
+acceptable for unit tests; integration smoke covers the live path).
+
 ### Sessions, not JWTs
 Opaque tokens live in `auth_sessions`; the cookie holds the plaintext,
 the DB holds `sha256(token)`. Revocation, sliding expiry, and "sign out
@@ -342,9 +387,11 @@ Thin composition root. `create_app(settings=None)` builds an isolated FastAPI ap
 | Rate limits | `tests/test_rate_limit.py` | 3 | 429 after burst on /auth/login, signup, forgot-password |
 | Security headers | `tests/test_security_headers.py` | 3 | Baseline headers + dev-no-HSTS + prod-HSTS |
 | Outbox cleanup | `tests/test_outbox_cleanup.py` | 2 | Old rows deleted, retention=0 disables |
-| **Total backend** | | **164** | |
+| Account + org deletion | `tests/test_deletion.py` | 6 | Password gate, last-owner cascade, name-mismatch confirm |
+| Per-org simulation | `tests/test_per_org_engine.py` | 2 | Two orgs see independent sites; deletion discards engine |
+| **Total backend** | | **172** | |
 | Frontend | `frontend/src/**/*.test.{ts,tsx}` | 52 | Sim canvas + auth (AuthProvider, RequireAuth), api.ts |
-| **Total** | | **216** | |
+| **Total** | | **224** | |
 
 Mypy strict scoped to `simulation/worker_internals.py`, `simulation/worker_behavior.py`, `state/source.py` — clean.
 
@@ -510,17 +557,25 @@ debt items 33–38 remain open.
 ### Architectural debt (still open)
 
 33. **Camera feeds are disconnected from simulation** — the core coherence problem. See architecture section above. The `SiteStateSource` Protocol seam already supports a future `LiveSource` that would replace the simulation engine with calibrated YOLO detections projected onto the 2D map.
-34. **Timeline lookahead is hardcoded** — static text in `Timeline.tsx`, not driven by simulation state. Damages trust if questioned.
-35. **Portfolio waste estimates are rough** — uses a fixed formula (`workers * 50 * 0.12 * 22 + equipment * 150 * 0.4 * 11 * 22`), not actual simulation data per project.
-36. **Per-org custom projects deferred.** The 3 `PROJECT_TEMPLATES` are still shared across orgs (one global `SimulationEngine`). Schema reserves space for `org_projects` later; `get_current_org` only gates access — it does not yet route to a per-org engine.
-37. **No 2FA UI yet.** The `users.totp_secret` column exists; the UI is intentionally hidden behind a future feature flag.
-38. **No billing.** `orgs.plan` exists (`trial|pro|enterprise`) but Stripe integration is a separate plan.
+34. **Per-org custom projects.** Each org now has its own `SimulationEngine` (see registry above) but the engines still pick from the 3 shared `PROJECT_TEMPLATES`. A future `org_projects` table would let users persist custom projects.
+35. **No 2FA UI yet.** The `users.totp_secret` column exists; the UI is intentionally hidden behind a future feature flag.
+36. **No billing.** `orgs.plan` exists (`trial|pro|enterprise`) but Stripe integration is a separate plan.
+37. **Bundle size warning** — the 1.2 MB lazy chunk is the zxcvbn-ts dictionary, only fetched when a user focuses a password field. Already code-split. Could be made smaller by limiting languages.
 
-### Resolved in the auth/orgs PR (2026-06-21)
+### Resolved in 2026-06-21
 
 - ~~**CORS hardcoded** to localhost:5173/5174~~ — `SITEIQ_CORS_ORIGINS` (comma-separated env var) drives the allow-list.
-- ~~**No tests** — empty `tests/__init__.py`~~ — backend is at 156 tests across 19 suites, frontend at 52.
+- ~~**No tests** — empty `tests/__init__.py`~~ — backend is at 172 tests across 22 suites, frontend at 52.
 - ~~**No auth, no persistence, no database**~~ — full self-hosted auth + SQLAlchemy/Alembic/SQLite-or-Postgres + audit log. See "Auth, orgs, and persistence" above.
+- ~~**Per-org engines deferred**~~ — `state/registry.py` keys engines by org_id, lazy creation, `Depends(get_source)` resolves through the active org.
+- ~~**No account / workspace deletion UI**~~ — `POST /auth/delete-account` + `DELETE /api/orgs/current`, both with password confirmation; UI under Settings → Account / Team danger zones.
+- ~~**Timeline lookahead hardcoded**~~ — `Timeline.tsx` now derives the next 30 days of phase transitions from the schedule + currentDay.
+- ~~**Portfolio waste from a fixed formula**~~ — `services/portfolio_estimator.py` warms each project template at startup and caches the real `compute_waste_summary` output.
+- ~~**No prod deployment story**~~ — `backend/Dockerfile` (multi-stage uv), `frontend/Dockerfile` (Vite → nginx), `docker-compose.yml` with Postgres. `docker compose up --build` is now the prod-shaped local stack.
+- ~~**No security headers**~~ — `api/security_headers.py` adds CSP, X-Frame, Referrer-Policy, Permissions-Policy, X-CTO; HSTS in prod.
+- ~~**No rate limits**~~ — slowapi on `/auth/login` (10/min), `/auth/signup` + `/auth/forgot-password` (5/hr), Redis-ready storage.
+- ~~**No password breach check**~~ — HIBP k-anonymity in `PasswordField` (only first 5 hex of SHA-1 leaves the browser).
+- ~~**Email outbox grew forever**~~ — periodic cleanup task with configurable TTL.
 
 ### API route → frontend mapping (verified)
 

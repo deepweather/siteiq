@@ -1,0 +1,63 @@
+# SiteIQ — production-shaped local stack.
+#
+#   docker compose up --build      # backend + frontend + Postgres
+#
+# This is the same shape as a real prod deployment: backend points at
+# Postgres via SITEIQ_DATABASE_URL; the frontend is built once and
+# served by nginx; cookies + CSRF flow through the bundled origins.
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: siteiq
+      POSTGRES_PASSWORD: siteiq
+      POSTGRES_DB: siteiq
+    volumes:
+      - siteiq_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U siteiq -d siteiq"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SITEIQ_ENV: prod
+      SITEIQ_DATABASE_URL: postgresql+asyncpg://siteiq:siteiq@db:5432/siteiq
+      SITEIQ_CORS_ORIGINS: http://localhost:8080
+      SITEIQ_FRONTEND_ORIGIN: http://localhost:8080
+      SITEIQ_SESSION_SECRET: please-replace-with-a-real-secret-in-prod
+      SITEIQ_LOG_LEVEL: INFO
+      SITEIQ_LOG_FORMAT: json
+      SITEIQ_EMAIL_PROVIDER: console
+      # When you're ready for real email:
+      # SITEIQ_EMAIL_PROVIDER: resend
+      # SITEIQ_RESEND_API_KEY: re_xxx
+      # SITEIQ_EMAIL_FROM: "SiteIQ <noreply@your-domain.com>"
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: http://localhost:8000
+        VITE_WS_BASE: ws://localhost:8000
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  siteiq_pg:

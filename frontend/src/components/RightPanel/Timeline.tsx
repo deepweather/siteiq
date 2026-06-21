@@ -95,40 +95,94 @@ export function Timeline({ schedule, currentDay, zones }: TimelineProps) {
       </div>
 
       <div className="border border-border rounded-lg p-4">
-        <div className="text-xs text-muted-foreground font-medium mb-3">Lookahead</div>
-        <div className="space-y-3">
-          <LookaheadItem
-            zone="Zone B"
-            color={PHASE_COLORS.mep_roughin}
-            text="MEP rough-in est. complete in ~18 days. Begin staging close-in materials."
-          />
-          <LookaheadItem
-            zone="Zone C"
-            color={PHASE_COLORS.structural}
-            text="Structural 65% complete. Rebar demand peaks in 8 days."
-          />
-          <LookaheadItem
-            zone="Zone D"
-            color={PHASE_COLORS.foundation}
-            text="Foundation pour starts in 5 days. Schedule concrete pump return."
-          />
+        <div className="text-xs text-muted-foreground font-medium mb-3">
+          Lookahead — next 30 days
         </div>
+        <Lookahead schedule={schedule} currentDay={currentDay} zones={zones} />
       </div>
     </div>
   );
 }
 
-function LookaheadItem({ zone, color, text }: { zone: string; color: string; text: string }) {
+const LOOKAHEAD_HORIZON_DAYS = 30;
+const LOOKAHEAD_MAX_ITEMS = 4;
+
+interface LookaheadEvent {
+  zoneLabel: string;
+  phase: string;
+  daysAway: number;
+  kind: 'starts' | 'finishes';
+}
+
+function buildLookahead(
+  schedule: ScheduleEntry[],
+  currentDay: number,
+  zones: Zone[],
+): LookaheadEvent[] {
+  const labelById: Record<string, string> = Object.fromEntries(
+    zones.map((z) => [z.id, z.label]),
+  );
+  const events: LookaheadEvent[] = [];
+  for (const e of schedule) {
+    const startsIn = e.start_day - currentDay;
+    if (startsIn > 0 && startsIn <= LOOKAHEAD_HORIZON_DAYS) {
+      events.push({
+        zoneLabel: labelById[e.zone_id] ?? e.zone_id,
+        phase: e.phase,
+        daysAway: startsIn,
+        kind: 'starts',
+      });
+    }
+    const endsIn = e.end_day - currentDay;
+    if (endsIn > 0 && endsIn <= LOOKAHEAD_HORIZON_DAYS && currentDay >= e.start_day) {
+      events.push({
+        zoneLabel: labelById[e.zone_id] ?? e.zone_id,
+        phase: e.phase,
+        daysAway: endsIn,
+        kind: 'finishes',
+      });
+    }
+  }
+  return events
+    .sort((a, b) => a.daysAway - b.daysAway)
+    .slice(0, LOOKAHEAD_MAX_ITEMS);
+}
+
+function Lookahead({
+  schedule,
+  currentDay,
+  zones,
+}: {
+  schedule: ScheduleEntry[];
+  currentDay: number;
+  zones: Zone[];
+}) {
+  const events = buildLookahead(schedule, currentDay, zones);
+  if (events.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        No phase transitions in the next {LOOKAHEAD_HORIZON_DAYS} days.
+      </p>
+    );
+  }
   return (
-    <div className="flex gap-2 text-xs">
-      <span
-        className="w-1 shrink-0 rounded-full"
-        style={{ backgroundColor: color, minHeight: '100%' }}
-      />
-      <div>
-        <span className="font-medium text-foreground">{zone}:</span>{' '}
-        <span className="text-muted-foreground">{text}</span>
-      </div>
-    </div>
+    <ul className="space-y-3">
+      {events.map((e, i) => (
+        <li key={`${e.zoneLabel}-${e.phase}-${e.kind}-${i}`} className="flex gap-2 text-xs">
+          <span
+            className="w-1 shrink-0 rounded-full"
+            style={{ backgroundColor: PHASE_COLORS[e.phase] || '#71717a', minHeight: '100%' }}
+          />
+          <div>
+            <span className="font-medium text-foreground">{e.zoneLabel}:</span>{' '}
+            <span className="text-muted-foreground">
+              {PHASE_LABELS[e.phase] || e.phase} {e.kind} in{' '}
+              <span className="font-mono tabular-nums">{e.daysAway}</span>{' '}
+              {e.daysAway === 1 ? 'day' : 'days'}.
+            </span>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }

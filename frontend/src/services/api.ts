@@ -1,8 +1,11 @@
 import type { Site } from '../types/site';
 import type { Recommendation } from '../types/analytics';
 
-export const API_BASE = 'http://localhost:8000';
-export const WS_BASE = 'ws://localhost:8000';
+// Vite inlines env vars at build time. The Dockerfile lets ops override
+// these via --build-arg; locally `npm run dev` falls back to the
+// uvicorn default port.
+export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8000';
+export const WS_BASE = (import.meta.env.VITE_WS_BASE as string | undefined) ?? 'ws://localhost:8000';
 
 /**
  * Typed error from the API. The backend always returns
@@ -124,6 +127,10 @@ export const auth = {
   resendVerification: () => postJson<{ status: string }>('/auth/resend-verification'),
   changePassword: (current: string, password: string) =>
     postJson<{ status: string }>('/auth/change-password', { current, password }),
+  deleteAccount: (currentPassword: string) =>
+    postJson<{ status: string; orgs_deleted: string[] }>('/auth/delete-account', {
+      current_password: currentPassword,
+    }).finally(clearCsrfCache),
   listSessions: () => getJson<SessionRow[]>('/auth/sessions'),
   revokeSession: (id: string) => postJson<{ status: string }>(`/auth/sessions/${id}/revoke`),
   revokeAll: () => postJson<{ status: string; revoked: number }>('/auth/sessions/revoke-all'),
@@ -178,6 +185,11 @@ export const orgs = {
     deleteJson<{ status: string }>(`/api/orgs/current/members/${userId}`),
   leave: () => postJson<{ status: string }>('/api/orgs/current/leave'),
   audit: () => getJson<AuditEvent[]>('/api/orgs/current/audit'),
+  deleteCurrent: (confirmName: string, currentPassword: string) =>
+    deleteJson<{ status: string; org_id: string }>('/api/orgs/current', {
+      confirm_name: confirmName,
+      current_password: currentPassword,
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -211,6 +223,9 @@ export interface PortfolioSite {
   day: number;
   site_width: number;
   site_height: number;
+  /** Daily waste from the per-project simulation warm-up. May be 0
+   *  if the estimator was skipped at startup (tests). */
+  estimated_daily_waste?: number;
   estimated_monthly_waste: number;
   active: boolean;
 }

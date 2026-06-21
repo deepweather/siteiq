@@ -89,6 +89,10 @@ class ChangePasswordRequest(BaseModel):
     password: str
 
 
+class DeleteAccountRequest(BaseModel):
+    current_password: str
+
+
 class UserOut(BaseModel):
     id: str
     email: str
@@ -326,6 +330,31 @@ async def reset_password(
     )
     set_session_cookie(response, settings, token, settings.session_lifetime_days)
     return await _build_me(db, user, org.id if org else None)
+
+
+@router.post("/delete-account")
+async def delete_account(
+    body: DeleteAccountRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Hard-delete the current user. Requires re-supplying the password
+    so a hijacked-but-active session can't quietly destroy the account.
+    Clears the session cookie. Cascades any orgs the user was the sole
+    owner of."""
+    settings = request.app.state.settings
+    deleted_orgs = await svc.delete_account(
+        db, user=user, current_password=body.current_password
+    )
+    # Drop any per-org simulation engines that no longer have an owner.
+    registry = getattr(request.app.state, "registry", None)
+    if registry is not None:
+        for org_id in deleted_orgs:
+            registry.discard(org_id)
+    clear_session_cookie(response, settings)
+    return {"status": "deleted", "orgs_deleted": deleted_orgs}
 
 
 @router.post("/change-password")

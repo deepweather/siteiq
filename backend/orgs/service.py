@@ -302,6 +302,30 @@ async def remove_member(
     )
 
 
+async def delete_org(db: AsyncSession, *, org: Org, actor: User) -> None:
+    """Owner-only. Wipes the org and everything that cascades from it
+    (memberships, invites, audit events). Sessions whose `current_org_id`
+    pointed at this org get the column cleared so they fall back to
+    another membership next request — they don't get logged out.
+    """
+    # Authorization is enforced at the route layer via require_role(Role.OWNER).
+    await _audit(
+        db,
+        kind="org.deleted",
+        org_id=None,  # the org will be gone, so we attach the event to no org
+        actor_user_id=actor.id,
+        payload={"deleted_org_id": org.id, "deleted_org_name": org.name},
+    )
+    # Sessions pointing at this org get nulled so they fall back gracefully.
+    from db.models import AuthSession  # local import — avoid cycles
+    await db.execute(
+        update(AuthSession)
+        .where(AuthSession.current_org_id == org.id)
+        .values(current_org_id=None)
+    )
+    await db.delete(org)
+
+
 async def leave_org(db: AsyncSession, *, org: Org, user: User) -> None:
     """User removes their own membership. Last owner cannot leave; must
     transfer ownership first."""

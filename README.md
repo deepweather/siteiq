@@ -26,6 +26,24 @@ npm run dev
 
 Open http://localhost:5173
 
+### Production stack via Docker Compose
+
+```bash
+docker compose up --build
+# → frontend:  http://localhost:8080
+# → backend:   http://localhost:8000
+# → Postgres:  localhost:5432  (user: siteiq, db: siteiq)
+```
+
+The compose file mirrors a real prod deployment:
+- Backend image (multi-stage `uv` build) runs `alembic upgrade head`
+  on start, then `uvicorn`.
+- Frontend image bakes the API origin in at build time via Vite env
+  args and serves the SPA from nginx.
+- Postgres replaces the dev SQLite file. The session-secret + email
+  provider come from env vars (`SITEIQ_*`) — review them in
+  `docker-compose.yml` before going live.
+
 ## Architecture
 
 - **Backend**: Python/FastAPI with in-memory simulation engine running at 10Hz, managed by `uv`

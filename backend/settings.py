@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     email_outbox_retention_days: int = 90
     email_outbox_cleanup_interval_seconds: int = 3600  # 1 hour
 
+    # Portfolio estimator. Computes per-template waste at startup by
+    # warming a transient SimulationEngine for each project. Tests turn
+    # this off so the lifespan stays fast.
+    compute_portfolio_at_startup: bool = True
+
     # Simulation
     default_project_id: str = "westhafen"
 

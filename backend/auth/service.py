@@ -298,6 +298,67 @@ async def reset_password(db: AsyncSession, *, token: str, new_password: str) -> 
     return user
 
 
+async def delete_account(
+    db: AsyncSession, *, user: User, current_password: str
+) -> list[str]:
+    """Deletes the user. Returns a list of org ids that became
+    member-less (empty owners) and were also deleted.
+
+    The user must re-supply their password — deletion is destructive
+    and the password gate prevents an attacker who hijacks an active
+    session from quietly nuking the account.
+
+    For each org the user OWNED:
+      - if there's another owner left → the org survives, only the
+        membership disappears.
+      - if the deleted user was the *last* owner → the org is deleted
+        entirely (cascade drops memberships, invites, audit_events).
+    Other roles (admin/member/viewer) just lose their membership.
+    """
+    if not verify_password(current_password, user.password_hash):
+        raise ApiError(400, "invalid_password", "Password is incorrect.", field="current_password")
+
+    # Find every org the user is a member of, and how many owners each has.
+    memberships = (
+        await db.execute(
+            select(OrgMembership).where(OrgMembership.user_id == user.id)
+        )
+    ).scalars().all()
+    deleted_orgs: list[str] = []
+    for m in memberships:
+        if m.role == Role.OWNER.value:
+            other_owners = await db.execute(
+                select(OrgMembership).where(
+                    OrgMembership.org_id == m.org_id,
+                    OrgMembership.user_id != user.id,
+                    OrgMembership.role == Role.OWNER.value,
+                )
+            )
+            if other_owners.scalar_one_or_none() is None:
+                # Last owner — wipe the org entirely.
+                org = await db.get(Org, m.org_id)
+                if org is not None:
+                    await _audit(
+                        db,
+                        kind="org.deleted",
+                        org_id=None,
+                        actor_user_id=user.id,
+                        payload={"reason": "owner_account_deletion", "org_id": m.org_id, "org_name": org.name},
+                    )
+                    await db.delete(org)
+                    deleted_orgs.append(m.org_id)
+
+    await _audit(
+        db,
+        kind="user.deleted",
+        org_id=None,
+        actor_user_id=None,
+        payload={"deleted_user_id": user.id, "email": user.email_lower},
+    )
+    await db.delete(user)
+    return deleted_orgs
+
+
 async def change_password(
     db: AsyncSession, *, user: User, current: str, new_password: str, current_session_id: str
 ) -> None:

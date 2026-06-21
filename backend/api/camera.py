@@ -35,7 +35,7 @@ async def camera_feed(websocket: WebSocket, video_id: str):
     if detector is None or video_id not in detector.get_video_ids():
         await websocket.close(code=1008, reason="Detector or video not available")
         return
-    if not await authenticate_ws(websocket):
+    if await authenticate_ws(websocket) is None:
         return
     await websocket.accept()
     try:

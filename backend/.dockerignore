@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.local
+vision/videos/*.mp4
+yolov8n.pt
+.ruff_cache/

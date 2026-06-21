@@ -171,6 +171,49 @@ async def leave(
     return {"status": "ok"}
 
 
+class DeleteOrgRequest(BaseModel):
+    confirm_name: str
+    current_password: str
+
+
+@router.delete("/current")
+async def delete_current_org(
+    body: DeleteOrgRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    org: Org = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    _: OrgMembership = Depends(require_role(Role.OWNER)),
+):
+    """Owner-only workspace deletion. Two confirmations:
+      1. The user re-supplies their password (live-session hijack guard).
+      2. The user types the workspace's exact name (typo guard).
+    """
+    from auth.passwords import verify_password
+    from auth.errors import ApiError as _ApiError  # already imported above
+
+    if body.confirm_name.strip() != org.name:
+        raise _ApiError(
+            400,
+            "name_mismatch",
+            "Type the exact workspace name to confirm.",
+            field="confirm_name",
+        )
+    if not verify_password(body.current_password, user.password_hash):
+        raise _ApiError(
+            400,
+            "invalid_password",
+            "Password is incorrect.",
+            field="current_password",
+        )
+    org_id = org.id
+    await svc.delete_org(db, org=org, actor=user)
+    registry = getattr(request.app.state, "registry", None)
+    if registry is not None:
+        registry.discard(org_id)
+    return {"status": "deleted", "org_id": org_id}
+
+
 @router.get("/current/audit")
 async def audit(
     db: AsyncSession = Depends(get_db),

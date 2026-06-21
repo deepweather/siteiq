@@ -35,13 +35,13 @@ from auth.email_sender import build_sender_from_settings
 from auth.outbox_cleanup import run_cleanup_loop as run_outbox_cleanup
 from auth.rate_limit import configure_storage, limiter, rate_limit_handler
 from auth.routes import router as auth_router
-from config import ANALYTICS_UPDATE_INTERVAL
+from config import ANALYTICS_UPDATE_INTERVAL, SIM_TICK_INTERVAL
 from db.engine import create_db_engine
 import logging_config
 from orgs.routes import router as orgs_router
-from services.recommendation_service import RecommendationService
+from services.portfolio_estimator import compute_all_estimates
 from settings import Settings, get_settings
-from simulation.engine import SimulationEngine, run_simulation_loop
+from state.registry import make_registry, run_loops_for_registry
 from vision.detector import VideoDetector
 
 
@@ -49,22 +49,27 @@ logger = logging.getLogger("siteiq.main")
 
 
 async def _run_analytics_loop(app: FastAPI) -> None:
-    """Background task: refresh WasteSummary every ANALYTICS_UPDATE_INTERVAL s
-    and tell the rec service to recompute on next access."""
+    """Background task: refresh WasteSummary for every active engine
+    every ANALYTICS_UPDATE_INTERVAL s and tell the matching rec service
+    to recompute on next access."""
     while True:
-        source = getattr(app.state, "source", None)
-        rec_service = getattr(app.state, "rec_service", None)
-        if source is None or rec_service is None:
+        registry = getattr(app.state, "registry", None)
+        if registry is None:
             await asyncio.sleep(ANALYTICS_UPDATE_INTERVAL)
             continue
-        try:
-            app.state.latest_analytics = compute_waste_summary(source)
-            rec_service.mark_dirty()
-        except Exception:
-            logger.exception(
-                "analytics_tick_failed",
-                extra={"project_id": getattr(source, "project_id", None)},
-            )
+        for org_id, source in registry.items():
+            try:
+                summary = compute_waste_summary(source)
+                registry.set_latest_analytics(org_id, summary)
+                registry.rec_service_for(org_id).mark_dirty()
+            except Exception:
+                logger.exception(
+                    "analytics_tick_failed",
+                    extra={
+                        "org_id": org_id,
+                        "project_id": getattr(source, "project_id", None),
+                    },
+                )
         await asyncio.sleep(ANALYTICS_UPDATE_INTERVAL)
 
 
@@ -88,14 +93,19 @@ async def lifespan(app: FastAPI):
     app.state.limiter = limiter
 
     # ---- Simulation ----
-    source = SimulationEngine(project_id=settings.default_project_id)
-    rec_service = RecommendationService(source)
+    registry = make_registry(default_project_id=settings.default_project_id)
     detector = VideoDetector()
+    # Per-project portfolio waste estimates — deterministic given the
+    # templates, so compute once at startup and cache for app lifetime.
+    # Tests can opt out via SITEIQ_COMPUTE_PORTFOLIO_AT_STARTUP=false to
+    # keep TestClient lifespans fast.
+    portfolio_estimates = (
+        compute_all_estimates() if settings.compute_portfolio_at_startup else {}
+    )
 
-    app.state.source = source
-    app.state.rec_service = rec_service
+    app.state.registry = registry
     app.state.detector = detector
-    app.state.latest_analytics = None
+    app.state.portfolio_estimates = portfolio_estimates
 
     logger.info(
         "vision_initialised",
@@ -103,7 +113,9 @@ async def lifespan(app: FastAPI):
                "camera_ids": detector.get_video_ids()},
     )
 
-    sim_task = asyncio.create_task(run_simulation_loop(source))
+    sim_task = asyncio.create_task(
+        run_loops_for_registry(registry, tick_interval=SIM_TICK_INTERVAL)
+    )
     analytics_task = asyncio.create_task(_run_analytics_loop(app))
     outbox_task = asyncio.create_task(
         run_outbox_cleanup(
@@ -116,7 +128,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        source.running = False
+        for eng in registry.all_engines():
+            eng.running = False
         for task in (sim_task, analytics_task, outbox_task):
             task.cancel()
         # Drain the cancellations — without this, `engine.dispose()` can

@@ -6,7 +6,7 @@ functions of their inputs, which makes them trivially testable.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from api.deps import get_current_org, get_rec_service, get_source
@@ -31,15 +31,32 @@ async def list_projects(_: Org = Depends(get_current_org)):
 
 @router.get("/api/portfolio")
 async def get_portfolio(
+    request: Request,
     source: SiteStateSource = Depends(get_source),
     _: Org = Depends(get_current_org),
 ):
-    """Returns simulated portfolio metrics for all project templates."""
+    """Returns per-project portfolio metrics for every template.
+
+    Waste numbers come from `services.portfolio_estimator` which warms a
+    transient `SimulationEngine` per project at app startup — so each
+    card shows the actual `compute_waste_summary` output for that
+    template, not a coarse formula.
+    """
+    estimates = getattr(request.app.state, "portfolio_estimates", {})
     portfolio = []
     for key, tmpl in PROJECT_TEMPLATES.items():
-        total_workers = sum(count for zdef in tmpl["zones"] for _, count in zdef["workers"])
-        total_equipment = len(tmpl["equipment"])
-        idle_equipment = sum(1 for e in tmpl["equipment"] if e["state"] == "idle")
+        est = estimates.get(key)
+        total_workers = (
+            est.total_workers
+            if est is not None
+            else sum(count for zdef in tmpl["zones"] for _, count in zdef["workers"])
+        )
+        total_equipment = est.total_equipment if est is not None else len(tmpl["equipment"])
+        idle_equipment = (
+            est.idle_equipment
+            if est is not None
+            else sum(1 for e in tmpl["equipment"] if e["state"] == "idle")
+        )
         portfolio.append({
             "id": key,
             "name": tmpl["name"],
@@ -52,8 +69,17 @@ async def get_portfolio(
             "day": tmpl["start_day"],
             "site_width": tmpl["width"],
             "site_height": tmpl["height"],
-            "estimated_monthly_waste": round(
-                total_workers * 50 * 0.12 * 22 + total_equipment * 150 * 0.4 * 11 * 22, 0
+            "estimated_daily_waste": est.daily_waste if est is not None else 0.0,
+            "estimated_monthly_waste": (
+                est.monthly_waste
+                if est is not None
+                # Fallback formula — only used if the estimator ran into
+                # an exception at startup.
+                else round(
+                    total_workers * 50 * 0.12 * 22
+                    + total_equipment * 150 * 0.4 * 11 * 22,
+                    0,
+                )
             ),
             "active": key == source.project_id,
         })

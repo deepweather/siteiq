@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -26,7 +27,8 @@ const ROLE_DESC: Record<string, string> = {
 };
 
 export default function TeamSettings() {
-  const { user, org } = useAuth();
+  const { user, org, refresh: refreshAuth } = useAuth();
+  const nav = useNavigate();
   const isOwner = org?.role === 'owner';
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [invites, setInvites] = useState<InviteRow[]>([]);
@@ -213,6 +215,106 @@ export default function TeamSettings() {
           </div>
         </section>
       )}
+
+      {isOwner && org && (
+        <DeleteWorkspaceSection
+          orgName={org.name}
+          onDeleted={async () => {
+            await refreshAuth();
+            nav('/app/settings/orgs', { replace: true });
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function DeleteWorkspaceSection({
+  orgName,
+  onDeleted,
+}: {
+  orgName: string;
+  onDeleted: () => Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await orgs.deleteCurrent(name, password);
+      await onDeleted();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not delete workspace.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2 className="text-lg font-semibold tracking-tight mb-1 text-destructive">
+        Delete workspace
+      </h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Removes <strong>{orgName}</strong>, every member's access, all invites,
+        and the audit log. This is irreversible.
+      </p>
+      <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-6">
+        {!confirming ? (
+          <button
+            onClick={() => setConfirming(true)}
+            className="rounded-md border border-destructive text-destructive font-semibold text-sm px-4 py-2 hover:bg-destructive/10"
+          >
+            Delete this workspace
+          </button>
+        ) : (
+          <div className="space-y-3">
+            {error && <FormError>{error}</FormError>}
+            <p className="text-sm">
+              Type <strong>{orgName}</strong> to confirm and re-enter your password.
+            </p>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={orgName}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Current password"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onSubmit}
+                disabled={busy || name !== orgName || !password}
+                className="rounded-md bg-destructive text-white font-semibold text-sm px-4 py-2 disabled:opacity-50"
+              >
+                {busy ? 'Deleting…' : 'Permanently delete'}
+              </button>
+              <button
+                onClick={() => {
+                  setConfirming(false);
+                  setName('');
+                  setPassword('');
+                  setError(null);
+                }}
+                className="text-sm text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

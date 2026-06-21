@@ -26,18 +26,11 @@ from state.source import SiteStateSource
 from vision.detector import VideoDetector
 
 
-def get_source(request: Request) -> SiteStateSource:
-    source = getattr(request.app.state, "source", None)
-    if source is None:
+def _get_registry(request: Request):
+    reg = getattr(request.app.state, "registry", None)
+    if reg is None:
         raise HTTPException(status_code=503, detail="State source not ready")
-    return source
-
-
-def get_rec_service(request: Request) -> RecommendationService:
-    svc = getattr(request.app.state, "rec_service", None)
-    if svc is None:
-        raise HTTPException(status_code=503, detail="Recommendation service not ready")
-    return svc
+    return reg
 
 
 def get_detector(request: Request) -> VideoDetector:
@@ -47,9 +40,10 @@ def get_detector(request: Request) -> VideoDetector:
     return det
 
 
-def get_analytics(request: Request):
-    """Latest WasteSummary or None. The analytics loop writes to app.state.latest_analytics."""
-    return getattr(request.app.state, "latest_analytics", None)
+# `get_source` etc. are now per-org. Each is a Depends that resolves the
+# active org first via `_org_for_source` (a private alias of
+# `get_current_org` to avoid the import cycle below since `Org` is a
+# DB model defined later in this file's import chain).
 
 
 def get_settings(request: Request):
@@ -161,3 +155,31 @@ def require_role(min_role: Role):
         return membership
 
     return _dep
+
+
+# ---------------------------------------------------------------------------
+# Per-org simulation source (resolved through the registry)
+# ---------------------------------------------------------------------------
+
+
+def get_source(
+    request: Request,
+    org: Org = Depends(get_current_org),
+) -> SiteStateSource:
+    return _get_registry(request).for_org(org.id)
+
+
+def get_rec_service(
+    request: Request,
+    org: Org = Depends(get_current_org),
+) -> RecommendationService:
+    return _get_registry(request).rec_service_for(org.id)
+
+
+def get_analytics(
+    request: Request,
+    org: Org = Depends(get_current_org),
+):
+    """Latest WasteSummary for the active org (or None until the
+    analytics loop has computed at least once)."""
+    return _get_registry(request).latest_analytics_for(org.id)

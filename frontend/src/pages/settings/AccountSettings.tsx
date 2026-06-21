@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -21,7 +22,8 @@ const Schema = z
 type Form = z.infer<typeof Schema>;
 
 export default function AccountSettings() {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
+  const nav = useNavigate();
   const [serverError, setServerError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -129,7 +131,89 @@ export default function AccountSettings() {
           <SubmitButton loading={isSubmitting}>Update password</SubmitButton>
         </form>
       </section>
+
+      <DangerZone
+        onDeleted={async () => {
+          await refresh();
+          nav('/', { replace: true });
+        }}
+      />
     </div>
+  );
+}
+
+function DangerZone({ onDeleted }: { onDeleted: () => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onDelete = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await auth.deleteAccount(password);
+      await onDeleted();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not delete account.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2 className="text-xl font-semibold tracking-tight mb-1 text-destructive">
+        Delete account
+      </h2>
+      <p className="text-sm text-muted-foreground mb-6">
+        Permanently delete your account. Workspaces where you're the only owner
+        will also be deleted.
+      </p>
+      <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-6">
+        {!confirming ? (
+          <button
+            onClick={() => setConfirming(true)}
+            className="rounded-md border border-destructive text-destructive font-semibold text-sm px-4 py-2 hover:bg-destructive/10"
+          >
+            Delete my account
+          </button>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm">
+              This is irreversible. Re-enter your password to confirm.
+            </p>
+            {error && <FormError>{error}</FormError>}
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Current password"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onDelete}
+                disabled={busy || !password}
+                className="rounded-md bg-destructive text-destructive-foreground font-semibold text-sm px-4 py-2 disabled:opacity-50"
+              >
+                {busy ? 'Deleting…' : 'Permanently delete'}
+              </button>
+              <button
+                onClick={() => {
+                  setConfirming(false);
+                  setPassword('');
+                  setError(null);
+                }}
+                className="text-sm text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

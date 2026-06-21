@@ -80,6 +80,8 @@ def app_settings(tmp_path):
         cookie_secure=False,
         session_secret="test-secret-for-tests-only",
         email_provider="console",
+        # Skip the per-project warm-up estimator to keep lifespan fast.
+        compute_portfolio_at_startup=False,
     )
 
 

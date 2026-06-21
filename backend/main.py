@@ -21,16 +21,19 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from analytics.aggregator import compute_waste_summary
 from api.camera import router as camera_router
 from api.dev import router as dev_router
 from api.routes import router as api_router
+from api.security_headers import SecurityHeadersMiddleware
 from api.websocket import router as ws_router
 from auth.csrf import CSRFMiddleware
 from auth.email_sender import build_sender_from_settings
-from auth.rate_limit import build_limiter
+from auth.outbox_cleanup import run_cleanup_loop as run_outbox_cleanup
+from auth.rate_limit import configure_storage, limiter, rate_limit_handler
 from auth.routes import router as auth_router
 from config import ANALYTICS_UPDATE_INTERVAL
 from db.engine import create_db_engine
@@ -78,7 +81,11 @@ async def lifespan(app: FastAPI):
     app.state.email_sender = build_sender_from_settings(settings)
 
     # ---- Rate limit ----
-    app.state.limiter = build_limiter(settings.rate_limit_redis_url)
+    # Module-level singleton so the @limiter.limit decorators on auth
+    # routes can resolve at import time. We swap its storage to Redis in
+    # prod. Tests flip `app.state.limiter.enabled = False` to opt out.
+    configure_storage(settings.rate_limit_redis_url)
+    app.state.limiter = limiter
 
     # ---- Simulation ----
     source = SimulationEngine(project_id=settings.default_project_id)
@@ -98,13 +105,28 @@ async def lifespan(app: FastAPI):
 
     sim_task = asyncio.create_task(run_simulation_loop(source))
     analytics_task = asyncio.create_task(_run_analytics_loop(app))
+    outbox_task = asyncio.create_task(
+        run_outbox_cleanup(
+            session_factory,
+            retention_days=settings.email_outbox_retention_days,
+            interval_seconds=settings.email_outbox_cleanup_interval_seconds,
+        )
+    )
 
     try:
         yield
     finally:
         source.running = False
-        sim_task.cancel()
-        analytics_task.cancel()
+        for task in (sim_task, analytics_task, outbox_task):
+            task.cancel()
+        # Drain the cancellations — without this, `engine.dispose()` can
+        # race with an in-flight outbox cleanup and the lifespan never
+        # returns control to the TestClient.
+        for task in (sim_task, analytics_task, outbox_task):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
         detector.cleanup()
         await engine.dispose()
 
@@ -132,6 +154,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CSRFMiddleware,
         allowed_origins=cfg.cors_origins,
     )
+    # Outermost: every response gets baseline security headers.
+    # SecurityHeadersMiddleware is a pure ASGI middleware (not
+    # BaseHTTPMiddleware) — required for the stack to play nicely with
+    # the TestClient.
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        is_prod=cfg.is_prod,
+        frontend_origin=cfg.frontend_origin,
+    )
 
     # Standard error envelope. The frontend expects {error: {code, message, field?}}.
     @app.exception_handler(StarletteHTTPException)
@@ -143,6 +174,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status_code=exc.status_code,
             content={"error": {"code": "http_error", "message": str(exc.detail)}},
         )
+
+    @app.exception_handler(RateLimitExceeded)
+    async def _rate_limit_exc(request: Request, exc: RateLimitExceeded):
+        return await rate_limit_handler(request, exc)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_exc(request: Request, exc: RequestValidationError):

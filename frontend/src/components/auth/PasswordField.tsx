@@ -1,13 +1,18 @@
 /**
- * Password field with a zxcvbn-ts-driven strength meter.
+ * Password field with a zxcvbn-ts-driven strength meter and an HIBP
+ * k-anonymity breach check.
  *
- * zxcvbn is loaded lazily (~150 KB gzipped of dictionaries) so the auth
- * forms stay snappy on cold-load. Below the input we show a 4-segment
- * meter with the matching label (Weak / Fair / Good / Strong / Excellent)
- * and an estimated crack-time hint.
+ * - zxcvbn is loaded lazily (~150 KB gzipped of dictionaries) so the
+ *   auth forms stay snappy on cold-load.
+ * - HIBP runs on blur (debounced via a 600 ms idle timer) so we don't
+ *   round-trip on every keystroke. The check is privacy-preserving:
+ *   only the first 5 hex chars of SHA-1(password) leave the browser.
+ * - If the password is found in a known breach, we render a clear
+ *   warning beneath the meter with the breach count.
  */
 import { forwardRef, useEffect, useState, type InputHTMLAttributes } from 'react';
 import { TextField } from './fields';
+import { checkBreach } from './hibp';
 
 interface Props extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
   label?: string;
@@ -26,6 +31,7 @@ export const PasswordField = forwardRef<HTMLInputElement, Props>(function Passwo
   const [show, setShow] = useState(false);
   const value = passwordValue ?? '';
   const score = useStrengthScore(showStrength ? value : null);
+  const breachCount = useBreachCheck(showStrength ? value : null);
 
   return (
     <div className="mb-4">
@@ -74,6 +80,11 @@ export const PasswordField = forwardRef<HTMLInputElement, Props>(function Passwo
           </span>
         </div>
       )}
+      {showStrength && breachCount > 0 && (
+        <p className="text-xs text-destructive mt-1">
+          This password has appeared in {breachCount.toLocaleString()} known data breach{breachCount === 1 ? '' : 'es'}. Pick a different one.
+        </p>
+      )}
       {error && <p className="text-xs text-destructive mt-1">{error}</p>}
     </div>
   );
@@ -81,6 +92,33 @@ export const PasswordField = forwardRef<HTMLInputElement, Props>(function Passwo
 
 // Hidden-by-default to keep TextField's API export untouched.
 TextField.displayName ??= 'TextField';
+
+/**
+ * HIBP k-anonymity check, debounced. Returns -1 (network failure) /
+ * 0 (clean) / N (breach count). We start at 0 and only update when the
+ * user pauses typing for ~600 ms, so the check fires once per "draft".
+ */
+function useBreachCheck(value: string | null): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (value === null) return;
+    if (!value || value.length < 8) {
+      setCount(0);
+      return;
+    }
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(async () => {
+      const n = await checkBreach(value, ctrl.signal);
+      if (!ctrl.signal.aborted) setCount(n < 0 ? 0 : n);
+    }, 600);
+    return () => {
+      window.clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [value]);
+  return count;
+}
+
 
 function useStrengthScore(value: string | null): number | null {
   const [score, setScore] = useState<number | null>(null);

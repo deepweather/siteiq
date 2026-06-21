@@ -29,6 +29,7 @@ from auth import service as svc
 from auth.csrf import CSRF_COOKIE, generate_csrf_token
 from auth.email_sender import EmailSender
 from auth.errors import ApiError
+from auth.rate_limit import limiter
 from auth.sessions import (
     clear_session_cookie,
     create_session,
@@ -176,9 +177,10 @@ async def issue_csrf(request: Request, response: Response):
 
 
 @router.post("/signup")
+@limiter.limit("5/hour")
 async def signup(
-    body: SignupRequest,
     request: Request,
+    body: SignupRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
     sender: EmailSender = Depends(get_email_sender),
@@ -206,9 +208,10 @@ async def signup(
 
 
 @router.post("/login")
+@limiter.limit("10/minute")
 async def login(
-    body: LoginRequest,
     request: Request,
+    body: LoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
@@ -288,9 +291,10 @@ async def resend_verification(
 
 
 @router.post("/forgot-password")
+@limiter.limit("5/hour")
 async def forgot_password(
-    body: ForgotPasswordRequest,
     request: Request,
+    body: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
     sender: EmailSender = Depends(get_email_sender),
 ):

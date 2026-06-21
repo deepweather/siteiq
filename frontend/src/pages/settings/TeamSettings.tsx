@@ -54,11 +54,13 @@ export default function TeamSettings() {
     handleSubmit,
     setError,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<InviteForm>({
     resolver: zodResolver(InviteSchema),
     defaultValues: { role: 'member' },
   });
+  const watchedRole = watch('role') ?? 'member';
 
   const onInvite = async (data: InviteForm) => {
     setServerError(null);
@@ -125,7 +127,7 @@ export default function TeamSettings() {
                 <option value="viewer">Viewer</option>
               </select>
               <p className="text-xs text-muted-foreground mt-1">
-                {ROLE_DESC[(errors.role && 'admin') || 'member']}
+                {ROLE_DESC[watchedRole]}
               </p>
             </div>
             <div className="self-end">

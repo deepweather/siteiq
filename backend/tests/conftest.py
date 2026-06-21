@@ -99,7 +99,15 @@ def app_factory(app_settings, monkeypatch):
 
     def _make():
         from main import create_app
-        return create_app(app_settings)
+        app = create_app(app_settings)
+        # Disable rate limiting by default so the auth fixture's signup
+        # call doesn't compete with concurrent tests across the same
+        # in-memory limiter. The `limiter` test below re-enables it.
+        from auth.rate_limit import limiter
+        limiter.enabled = False
+        if hasattr(app.state, "limiter"):
+            app.state.limiter.enabled = False
+        return app
 
     return _make
 

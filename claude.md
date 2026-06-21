@@ -133,6 +133,45 @@ flowchart LR
     DB --> Tables["users, orgs, org_memberships, org_invites,<br/>auth_sessions, verification_tokens, email_outbox, audit_events"]
 ```
 
+### Rate limiting + abuse controls
+slowapi limiter as a module-level singleton in `auth/rate_limit.py`
+(required because `@limiter.limit("…")` captures it at decoration
+time). Wired on:
+
+- `POST /auth/signup` — 5 / hour / IP (signup-spam guard)
+- `POST /auth/login` — 10 / minute / IP (brute-force guard)
+- `POST /auth/forgot-password` — 5 / hour / IP (email-cost guard)
+
+Storage is in-memory by default; `SITEIQ_RATE_LIMIT_REDIS_URL` swaps to
+Redis at lifespan start so multi-worker deployments share counters.
+The 429 response goes through the standard `{error: {code, message}}`
+envelope (`code: "rate_limited"`).
+
+### Security headers
+`api/security_headers.py` is a pure ASGI middleware (deliberately not
+`BaseHTTPMiddleware` — the latter deadlocks `TestClient` when stacked
+≥3 deep). On every HTTP response it adds:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()`
+- `Content-Security-Policy` — `default-src 'self'`, frame-ancestors
+  blocked, object-src blocked, `connect-src` whitelist includes
+  `api.pwnedpasswords.com` for the HIBP breach check
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` —
+  **only when `env=prod`** (would lock localhost into HTTPS-upgrades)
+
+### Email outbox retention
+`auth/outbox_cleanup.py` is a periodic background task spawned in the
+lifespan. Deletes `email_outbox` rows older than
+`SITEIQ_EMAIL_OUTBOX_RETENTION_DAYS` (default 90) every
+`SITEIQ_EMAIL_OUTBOX_CLEANUP_INTERVAL_SECONDS` (default 3600). Set
+retention to `0` to disable. The lifespan teardown awaits the
+cancelled task before disposing the DB engine — without that drain,
+an in-flight cleanup can race the engine shutdown and the lifespan
+never returns.
+
 ### Sessions, not JWTs
 Opaque tokens live in `auth_sessions`; the cookie holds the plaintext,
 the DB holds `sha256(token)`. Revocation, sliding expiry, and "sign out
@@ -300,9 +339,12 @@ Thin composition root. `create_app(settings=None)` builds an isolated FastAPI ap
 | `/api/orgs/*` routes | `tests/test_orgs.py` | 7 | Auto-org-on-signup, invites, role gating, audit |
 | `EmailSender` | `tests/test_email_sender.py` | 4 | Console outbox + Resend httpx_mock + 5xx |
 | AuthZ | `tests/test_authz.py` | 3 | 401 without cookie, role gates 403 |
-| **Total backend** | | **156** | |
+| Rate limits | `tests/test_rate_limit.py` | 3 | 429 after burst on /auth/login, signup, forgot-password |
+| Security headers | `tests/test_security_headers.py` | 3 | Baseline headers + dev-no-HSTS + prod-HSTS |
+| Outbox cleanup | `tests/test_outbox_cleanup.py` | 2 | Old rows deleted, retention=0 disables |
+| **Total backend** | | **164** | |
 | Frontend | `frontend/src/**/*.test.{ts,tsx}` | 52 | Sim canvas + auth (AuthProvider, RequireAuth), api.ts |
-| **Total** | | **208** | |
+| **Total** | | **216** | |
 
 Mypy strict scoped to `simulation/worker_internals.py`, `simulation/worker_behavior.py`, `state/source.py` — clean.
 

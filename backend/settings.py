@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # Rate limiting.
     rate_limit_redis_url: str = ""  # empty = in-memory limiter (dev only)
 
+    # Outbox cleanup. Sent emails older than this are deleted by a
+    # periodic background task. Set to 0 to disable cleanup entirely.
+    email_outbox_retention_days: int = 90
+    email_outbox_cleanup_interval_seconds: int = 3600  # 1 hour
+
     # Simulation
     default_project_id: str = "westhafen"
 

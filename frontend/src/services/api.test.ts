@@ -1,15 +1,49 @@
 /**
  * Bug #3 — api.ts must throw on non-2xx responses instead of silently
  * returning undefined. Bug #5 — API_BASE/WS_BASE constants must be the
- * single source of truth for URL bases.
+ * single source of truth for URL bases. Plus new auth-era checks: every
+ * mutating request must include credentials + the X-CSRF-Token header.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-  API_BASE, WS_BASE,
-  fetchProjects, fetchSite, fetchRecommendations, fetchAssetDetail,
-  fetchCameras, loadProject, applyRecommendation, applyAllRecommendations,
-  setSimSpeed, togglePause,
+  API_BASE,
+  WS_BASE,
+  ApiError,
+  clearCsrfCache,
+  fetchProjects,
+  fetchSite,
+  fetchRecommendations,
+  fetchAssetDetail,
+  fetchCameras,
+  loadProject,
+  applyRecommendation,
+  applyAllRecommendations,
+  setSimSpeed,
+  togglePause,
 } from './api';
+
+const okJson = (body: unknown) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+const errEnvelope = (status: number, code = 'http_error', message = 'boom') =>
+  new Response(JSON.stringify({ error: { code, message } }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+function mockCsrfThen(handler: (req: Request) => Response) {
+  const responses: Response[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : (input as Request).url;
+    if (url.endsWith('/auth/csrf')) {
+      return okJson({ csrf_token: 'test-csrf-123' });
+    }
+    const req = input instanceof Request ? input : new Request(String(input));
+    const r = handler(req);
+    responses.push(r);
+    return r;
+  });
+}
 
 describe('api.ts URL constants (bug #5)', () => {
   it('exports API_BASE pointing at backend default port', () => {
@@ -23,6 +57,7 @@ describe('api.ts URL constants (bug #5)', () => {
 describe('api.ts error handling (bug #3)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    clearCsrfCache();
   });
 
   it.each([
@@ -31,11 +66,9 @@ describe('api.ts error handling (bug #3)', () => {
     ['fetchRecommendations', () => fetchRecommendations()],
     ['fetchCameras', () => fetchCameras()],
     ['fetchAssetDetail', () => fetchAssetDetail('foo')],
-  ])('%s rejects on 500', async (_name, fn) => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('boom', { status: 500, statusText: 'Server Error' }),
-    );
-    await expect(fn()).rejects.toThrow(/500/);
+  ])('%s rejects with ApiError on 500', async (_name, fn) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errEnvelope(500));
+    await expect(fn()).rejects.toBeInstanceOf(ApiError);
   });
 
   it.each([
@@ -44,61 +77,82 @@ describe('api.ts error handling (bug #3)', () => {
     ['applyAllRecommendations', () => applyAllRecommendations()],
     ['setSimSpeed', () => setSimSpeed(5)],
     ['togglePause', () => togglePause()],
-  ])('%s rejects on 500', async (_name, fn) => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('boom', { status: 500, statusText: 'Server Error' }),
-    );
-    await expect(fn()).rejects.toThrow(/500/);
+  ])('%s rejects with ApiError on 500', async (_name, fn) => {
+    mockCsrfThen(() => errEnvelope(500));
+    await expect(fn()).rejects.toBeInstanceOf(ApiError);
   });
 
   it('happy path: parses JSON body successfully', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify([{ id: 'p', name: 'P', description: 'd', type: 'Residential' }]), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      okJson([{ id: 'p', name: 'P', description: 'd', type: 'Residential' }]),
     );
     const projects = await fetchProjects();
     expect(projects).toHaveLength(1);
     expect(projects[0].id).toBe('p');
   });
 
-  it('happy path: 404 still rejects (no silent undefined)', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('not found', { status: 404, statusText: 'Not Found' }),
-    );
-    await expect(fetchAssetDetail('ghost')).rejects.toThrow(/404/);
+  it('happy path: 404 still rejects with ApiError (no silent undefined)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errEnvelope(404, 'not_found', 'Asset not found'));
+    await expect(fetchAssetDetail('ghost')).rejects.toMatchObject({
+      status: 404,
+      code: 'not_found',
+    });
   });
 
-  it('POST without body sends no Content-Type header', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('null', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    );
+  it('GET requests include credentials for cookie auth', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(okJson([]));
+    await fetchProjects();
+    const init = spy.mock.calls[0][1] as RequestInit;
+    expect(init.credentials).toBe('include');
+  });
+
+  it('POST without body sends X-CSRF-Token header but no Content-Type', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      if (url.endsWith('/auth/csrf')) return okJson({ csrf_token: 'csrf-abc' });
+      return okJson(null);
+    });
     await togglePause();
-    const call = fetchSpy.mock.calls[0];
-    const init = call[1] as RequestInit;
+    // Find the POST call (not the CSRF GET).
+    const postCall = spy.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCall).toBeDefined();
+    const init = postCall![1] as RequestInit;
     expect(init.method).toBe('POST');
-    expect(init.headers).toBeUndefined();
+    expect(init.credentials).toBe('include');
+    const headers = init.headers as Record<string, string>;
+    expect(headers['X-CSRF-Token']).toBe('csrf-abc');
+    expect(headers['Content-Type']).toBeUndefined();
   });
 
-  it('POST with body sends Content-Type and serialized JSON', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('null', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    );
+  it('POST with body sends Content-Type and serialized JSON + CSRF', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      if (url.endsWith('/auth/csrf')) return okJson({ csrf_token: 'csrf-xyz' });
+      return okJson(null);
+    });
     await setSimSpeed(5);
-    const init = fetchSpy.mock.calls[0][1] as RequestInit;
-    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    const postCall = spy.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === 'POST',
+    );
+    const init = postCall![1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers['X-CSRF-Token']).toBe('csrf-xyz');
     expect(init.body).toBe(JSON.stringify({ speed: 5 }));
   });
 
   it('correct paths used for each endpoint (bug #5)', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
-      async () => new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    );
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      if (url.endsWith('/auth/csrf')) return okJson({ csrf_token: 't' });
+      return okJson([]);
+    });
     await fetchProjects();
     await fetchCameras();
     await loadProject('westhafen');
-    const urls = fetchSpy.mock.calls.map(c => c[0]);
+    const urls = fetchSpy.mock.calls.map((c) => c[0]);
     expect(urls).toContain(`${API_BASE}/api/projects`);
     expect(urls).toContain(`${API_BASE}/api/cameras`);
     expect(urls).toContain(`${API_BASE}/api/projects/westhafen/load`);

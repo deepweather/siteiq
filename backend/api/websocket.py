@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from api.ws_auth import authenticate_ws
 from config import WS_PUSH_INTERVAL
 from simulation.engine import SimulationEngine
 
@@ -21,6 +22,8 @@ async def websocket_endpoint(websocket: WebSocket):
     source = getattr(websocket.app.state, "source", None)
     if source is None:
         await websocket.close(code=1011, reason="State source not ready")
+        return
+    if not await authenticate_ws(websocket):
         return
     await websocket.accept()
     try:

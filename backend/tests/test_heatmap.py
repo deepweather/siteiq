@@ -52,30 +52,8 @@ def test_density_grid_sparse_only_visited_cells():
     assert len(snap["cells"]) <= 50
 
 
-@pytest.fixture
-def client():
-    """Live TestClient with the no-op detector."""
-    import vision.detector as vd
-
-    class _Noop:
-        def get_video_ids(self): return []
-        def get_video_info(self, _): return None
-        def get_next_frame(self, *_a, **_kw): return None
-        def cleanup(self): pass
-
-    original = vd.VideoDetector
-    vd.VideoDetector = _Noop  # type: ignore[misc]
-    try:
-        from main import create_app
-        app = create_app()
-        with TestClient(app) as c:
-            yield c
-    finally:
-        vd.VideoDetector = original
-
-
-def test_heatmap_endpoint_returns_shape(client):
-    r = client.get("/api/simulation/heatmap")
+def test_heatmap_endpoint_returns_shape(auth_client):
+    r = auth_client.get("/api/simulation/heatmap")
     assert r.status_code == 200
     body = r.json()
     for k in ("cell_size", "site_width", "site_height", "max_count", "cells"):

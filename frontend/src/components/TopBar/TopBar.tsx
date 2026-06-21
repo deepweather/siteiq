@@ -9,11 +9,12 @@ interface TopBarProps {
   siteName: string;
   onProjectChange: () => void;
   onShowPortfolio: () => void;
+  onShowSettings?: () => void;
 }
 
 const SPEEDS = [1, 2, 5, 10];
 
-export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, onShowPortfolio }: TopBarProps) {
+export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, onShowPortfolio, onShowSettings }: TopBarProps) {
   const [activeSpeed, setActiveSpeed] = useState(1);
   const [paused, setPaused] = useState(false);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -68,6 +69,15 @@ export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, 
         >
           Portfolio
         </button>
+        {onShowSettings && (
+          <button
+            onClick={onShowSettings}
+            className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-secondary border border-border transition-colors"
+            title="Settings"
+          >
+            Settings
+          </button>
+        )}
       </div>
 
       <div className="flex-1 flex items-center justify-center gap-4">

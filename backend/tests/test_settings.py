@@ -53,16 +53,26 @@ def test_log_level_is_case_insensitive(monkeypatch):
     assert s.log_level == "DEBUG"
 
 
-def test_explicit_settings_passed_to_create_app():
+def test_explicit_settings_passed_to_create_app(tmp_path):
     """create_app(settings=...) must use the passed settings, not env."""
     from fastapi.testclient import TestClient
     from main import create_app
+    from tests.conftest import authenticate, setup_test_db
 
-    custom = Settings(default_project_id="isar-bridge", log_level="WARNING")
+    db = tmp_path / "ex.db"
+    custom = Settings(
+        env="dev",
+        default_project_id="isar-bridge",
+        log_level="WARNING",
+        database_url=f"sqlite+aiosqlite:///{db}",
+        cors_origins="http://test.example.com",
+        frontend_origin="http://test.example.com",
+        cookie_secure=False,
+    )
+    setup_test_db(custom.database_url)
     app = create_app(settings=custom)
     assert app.state.settings is custom
 
-    # Disable detector to keep test fast
     import vision.detector as vd
     class _Noop:
         def get_video_ids(self): return []
@@ -73,6 +83,7 @@ def test_explicit_settings_passed_to_create_app():
     vd.VideoDetector = _Noop  # type: ignore[misc]
     try:
         with TestClient(app) as c:
+            authenticate(c)
             site = c.get("/api/site").json()
             assert "Isarbrücke" in site["name"]
     finally:

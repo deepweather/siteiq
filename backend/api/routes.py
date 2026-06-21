@@ -9,7 +9,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.deps import get_rec_service, get_source
+from api.deps import get_current_org, get_rec_service, get_source
+from db.models import Org
 from models.assets import Position, EquipmentState
 from services.recommendation_service import RecommendationService
 from simulation.engine import SimulationEngine
@@ -24,12 +25,15 @@ class SpeedRequest(BaseModel):
 
 
 @router.get("/api/projects")
-async def list_projects():
+async def list_projects(_: Org = Depends(get_current_org)):
     return get_project_list()
 
 
 @router.get("/api/portfolio")
-async def get_portfolio(source: SiteStateSource = Depends(get_source)):
+async def get_portfolio(
+    source: SiteStateSource = Depends(get_source),
+    _: Org = Depends(get_current_org),
+):
     """Returns simulated portfolio metrics for all project templates."""
     portfolio = []
     for key, tmpl in PROJECT_TEMPLATES.items():
@@ -61,6 +65,7 @@ async def load_project(
     project_id: str,
     source: SiteStateSource = Depends(get_source),
     rec_service: RecommendationService = Depends(get_rec_service),
+    _: Org = Depends(get_current_org),
 ):
     if project_id not in PROJECT_TEMPLATES:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -74,7 +79,10 @@ async def load_project(
 
 
 @router.get("/api/site")
-async def get_site(source: SiteStateSource = Depends(get_source)):
+async def get_site(
+    source: SiteStateSource = Depends(get_source),
+    _: Org = Depends(get_current_org),
+):
     return {
         "id": source.site.id,
         "name": source.site.name,
@@ -87,7 +95,10 @@ async def get_site(source: SiteStateSource = Depends(get_source)):
 
 
 @router.get("/api/recommendations")
-async def get_recommendations(rec_service: RecommendationService = Depends(get_rec_service)):
+async def get_recommendations(
+    rec_service: RecommendationService = Depends(get_rec_service),
+    _: Org = Depends(get_current_org),
+):
     return [r.model_dump() for r in rec_service.get()]
 
 
@@ -96,6 +107,7 @@ async def apply_recommendation(
     rec_id: str,
     source: SiteStateSource = Depends(get_source),
     rec_service: RecommendationService = Depends(get_rec_service),
+    _: Org = Depends(get_current_org),
 ):
     rec = rec_service.by_id(rec_id)
     if not rec:
@@ -110,6 +122,7 @@ async def apply_recommendation(
 async def apply_all(
     source: SiteStateSource = Depends(get_source),
     rec_service: RecommendationService = Depends(get_rec_service),
+    _: Org = Depends(get_current_org),
 ):
     applied = 0
     for r in rec_service.get():
@@ -134,7 +147,11 @@ def _apply_rec(rec, source: SiteStateSource) -> None:
 
 
 @router.get("/api/assets/{asset_id}")
-async def get_asset_detail(asset_id: str, source: SiteStateSource = Depends(get_source)):
+async def get_asset_detail(
+    asset_id: str,
+    source: SiteStateSource = Depends(get_source),
+    _: Org = Depends(get_current_org),
+):
     from simulation.asset_detail import asset_detail
     detail = asset_detail(source, asset_id)
     if detail is None:
@@ -143,7 +160,11 @@ async def get_asset_detail(asset_id: str, source: SiteStateSource = Depends(get_
 
 
 @router.post("/api/simulation/speed")
-async def set_speed(req: SpeedRequest, source: SiteStateSource = Depends(get_source)):
+async def set_speed(
+    req: SpeedRequest,
+    source: SiteStateSource = Depends(get_source),
+    _: Org = Depends(get_current_org),
+):
     # Simulation-specific control surface
     if not isinstance(source, SimulationEngine):
         raise HTTPException(status_code=501, detail="speed control only available for simulation source")
@@ -152,7 +173,10 @@ async def set_speed(req: SpeedRequest, source: SiteStateSource = Depends(get_sou
 
 
 @router.post("/api/simulation/pause")
-async def toggle_pause(source: SiteStateSource = Depends(get_source)):
+async def toggle_pause(
+    source: SiteStateSource = Depends(get_source),
+    _: Org = Depends(get_current_org),
+):
     if not isinstance(source, SimulationEngine):
         raise HTTPException(status_code=501, detail="pause only available for simulation source")
     source.paused = not source.paused
@@ -160,14 +184,20 @@ async def toggle_pause(source: SiteStateSource = Depends(get_source)):
 
 
 @router.get("/api/simulation/state")
-async def get_sim_state(source: SiteStateSource = Depends(get_source)):
+async def get_sim_state(
+    source: SiteStateSource = Depends(get_source),
+    _: Org = Depends(get_current_org),
+):
     if not isinstance(source, SimulationEngine):
         raise HTTPException(status_code=501, detail="state snapshot only available for simulation source")
     return source.get_state_snapshot()
 
 
 @router.get("/api/simulation/heatmap")
-async def get_heatmap(source: SiteStateSource = Depends(get_source)):
+async def get_heatmap(
+    source: SiteStateSource = Depends(get_source),
+    _: Org = Depends(get_current_org),
+):
     """Cumulative foot-traffic density grid for the current sim day."""
     if not isinstance(source, SimulationEngine):
         raise HTTPException(status_code=501, detail="heatmap only available for simulation source")

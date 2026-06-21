@@ -6,7 +6,9 @@ import logging
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from api.deps import get_detector
+from api.deps import get_current_org, get_detector
+from api.ws_auth import authenticate_ws
+from db.models import Org
 from vision.detector import VideoDetector
 
 router = APIRouter()
@@ -14,7 +16,10 @@ logger = logging.getLogger("siteiq.api.camera")
 
 
 @router.get("/api/cameras")
-async def list_cameras(detector: VideoDetector = Depends(get_detector)):
+async def list_cameras(
+    detector: VideoDetector = Depends(get_detector),
+    _: Org = Depends(get_current_org),
+):
     result = []
     for vid_id in detector.get_video_ids():
         info = detector.get_video_info(vid_id)
@@ -29,6 +34,8 @@ async def camera_feed(websocket: WebSocket, video_id: str):
     detector = getattr(websocket.app.state, "detector", None)
     if detector is None or video_id not in detector.get_video_ids():
         await websocket.close(code=1008, reason="Detector or video not available")
+        return
+    if not await authenticate_ws(websocket):
         return
     await websocket.accept()
     try:

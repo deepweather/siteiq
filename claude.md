@@ -80,6 +80,88 @@ npm run dev
 
 Camera feeds require .mp4 files in `backend/vision/videos/`. Two Pexels CC0 videos are downloaded but gitignored. YOLO model weights (`yolov8n.pt`) auto-download on first run.
 
+## Auth, orgs, and persistence
+
+A self-hosted auth stack sits in front of every `/api/*` and WebSocket
+route. SQLite drives dev/test (zero setup), Postgres drives prod — both
+behind one async SQLAlchemy 2.0 engine selected via `SITEIQ_DATABASE_URL`.
+
+```mermaid
+flowchart LR
+    Browser["Browser (cookie + CSRF)"] --> Routes
+    subgraph backend [FastAPI app]
+        Routes["/auth/* and /api/* routers"]
+        Routes --> Deps["api/deps.py: get_current_user, get_current_org, require_role"]
+        Deps --> DB[("SQLAlchemy async DB<br/>SQLite dev / Postgres prod")]
+        Deps --> Source["SiteStateSource (existing)"]
+        Routes --> Email["EmailSender Protocol"]
+        Email --> Console["ConsoleSender (dev)"]
+        Email --> Resend["ResendSender (prod)"]
+    end
+    DB --> Tables["users, orgs, org_memberships, org_invites,<br/>auth_sessions, verification_tokens, email_outbox, audit_events"]
+```
+
+### Sessions, not JWTs
+Opaque tokens live in `auth_sessions`; the cookie holds the plaintext,
+the DB holds `sha256(token)`. Revocation, sliding expiry, and "sign out
+everywhere" are all single SQL updates. Cookie name uses the `__Host-`
+prefix when `SITEIQ_COOKIE_SECURE=true` so browsers enforce Path=/, Secure,
+no Domain.
+
+### CSRF
+Double-submit cookie pattern (`siteiq_csrf` cookie + `X-CSRF-Token` header)
+plus an `Origin` allow-list checked on every state-changing request.
+WebSockets share the same Origin allow-list and re-verify the session
+cookie at upgrade.
+
+### Email
+`EmailSender` Protocol mirrors the `SiteStateSource` seam. `ConsoleSender`
+persists to `email_outbox`; the same rows are visible at `/dev/outbox`
+when `SITEIQ_ENV=dev`. `ResendSender` posts to api.resend.com via httpx
+and updates the same row's status. Tests assert against the outbox.
+
+### Orgs + roles
+Signup auto-creates an Org named after the company; the user is its
+owner. Roles (owner > admin > member > viewer) are checked via
+`Depends(require_role(Role.ADMIN))`. Invites are 7-day single-use tokens
+keyed to the invitee's email. Every membership change writes an
+`audit_events` row (visible to owners on Settings → Team).
+
+### New backend modules
+- `db/` — async engine factory + ORM models + `get_db` dependency.
+- `auth/` — `passwords.py` (argon2id), `tokens.py`, `sessions.py`,
+  `csrf.py`, `rate_limit.py`, `email_sender.py`, `email_templates.py`,
+  `service.py`, `routes.py`, `errors.py`, `timeutil.py`.
+- `orgs/` — invite/membership service + routes.
+- `api/dev.py` — `/dev/outbox` (mounted only when env=dev).
+- `api/ws_auth.py` — origin + cookie check shared by `/ws` and `/ws/camera/*`.
+- `alembic/` — migrations; one revision (`0001_init_auth`) creates every auth table.
+
+Every existing protected route is wrapped with `Depends(get_current_org)`,
+so unauthenticated requests get the canonical `{error: {code, message}}`
+401 envelope. The simulation itself stays a single global engine for
+v1; per-org engines are a future move and the `SiteStateSource` Protocol
+already supports it.
+
+### Frontend auth
+- Top-level `BrowserRouter` in `App.tsx` with public routes (`/`,
+  `/login`, `/signup`, `/forgot-password`, `/reset-password`,
+  `/verify-email`, `/accept-invite`) and gated `/app/*`.
+- `lib/auth/AuthProvider.tsx` boots via `GET /auth/me`, exposes
+  `useAuth()` everywhere. `RequireAuth` redirects to `/login?next=…`,
+  `RequireRole` shows an "Access denied" panel.
+- `services/api.ts` extends `getJson`/`postJson` with `credentials:
+  'include'` and an `X-CSRF-Token` header sourced from `/auth/csrf`.
+  All errors throw `ApiError` so forms can render `error.field`.
+- `pages/LandingPage.tsx` uses the same orange + JetBrains Mono tokens
+  as the dashboard, with a `LiveWasteCounter` that ticks up while the
+  user reads — same metric the dashboard surfaces, so the funnel feels
+  coherent.
+- `pages/settings/*` covers Account (change password, resend
+  verification), Team (members, invites, audit log for owners),
+  Workspaces (org switcher), and Sessions (per-device revoke + sign
+  out everywhere).
+
 ## Backend architecture (post-refactor)
 
 The backend follows a **state-source seam** so the simulation and (future) live-CV mode share the entire analytics + optimization + API surface. Every consumer depends only on the `SiteStateSource` Protocol, not on `SimulationEngine`. Long-lived objects live on `app.state` and are injected via FastAPI `Depends` — no module-level globals.

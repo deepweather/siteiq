@@ -8,8 +8,14 @@ Real-time construction site monitoring and optimization demo. Uses a simulation 
 ```bash
 cd backend
 uv sync
+# Apply database migrations (creates the SQLite file by default).
+uv run alembic upgrade head
 uv run uvicorn main:app --host 0.0.0.0 --port 8000
 ```
+
+Configure via `.env` (see `backend/.env.example`). In dev, transactional
+emails are written to `email_outbox` and visible at
+`http://localhost:8000/dev/outbox`.
 
 ### Frontend
 ```bash

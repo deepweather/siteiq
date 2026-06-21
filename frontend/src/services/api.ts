@@ -4,30 +4,185 @@ import type { Recommendation } from '../types/analytics';
 export const API_BASE = 'http://localhost:8000';
 export const WS_BASE = 'ws://localhost:8000';
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) {
-    throw new Error(`GET ${path} failed: ${res.status} ${res.statusText}`);
+/**
+ * Typed error from the API. The backend always returns
+ * `{ error: { code, message, field? } }` for non-2xx responses.
+ * Forms render `field` errors inline; everything else is a toast.
+ */
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  field?: string;
+  constructor(status: number, code: string, message: string, field?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.field = field;
   }
+}
+
+let csrfToken: string | null = null;
+
+async function ensureCsrf(): Promise<string> {
+  if (csrfToken) return csrfToken;
+  const res = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'include' });
+  if (!res.ok) throw new ApiError(res.status, 'csrf_fetch_failed', 'Could not initialise session.');
+  const body = (await res.json()) as { csrf_token: string };
+  csrfToken = body.csrf_token;
+  return csrfToken;
+}
+
+/** Reset the cached CSRF token — used after logout to force a re-fetch. */
+export function clearCsrfCache(): void {
+  csrfToken = null;
+}
+
+async function parseError(res: Response): Promise<ApiError> {
+  let payload: { error?: { code?: string; message?: string; field?: string } } = {};
+  try { payload = await res.json(); } catch { /* body may not be JSON */ }
+  const e = payload?.error ?? {};
+  return new ApiError(
+    res.status,
+    e.code ?? 'http_error',
+    e.message ?? `${res.status} ${res.statusText}`,
+    e.field,
+  );
+}
+
+export async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
+  if (!res.ok) throw await parseError(res);
   return res.json() as Promise<T>;
 }
 
-async function postJson(path: string, body?: unknown): Promise<unknown> {
-  const init: RequestInit = { method: 'POST' };
-  if (body !== undefined) {
-    init.headers = { 'Content-Type': 'application/json' };
-    init.body = JSON.stringify(body);
-  }
-  const res = await fetch(`${API_BASE}${path}`, init);
-  if (!res.ok) {
-    throw new Error(`POST ${path} failed: ${res.status} ${res.statusText}`);
-  }
-  try {
-    return await res.json();
-  } catch {
-    return undefined;
-  }
+export async function postJson<T = unknown>(path: string, body?: unknown): Promise<T> {
+  return mutate<T>('POST', path, body);
 }
+
+export async function patchJson<T = unknown>(path: string, body?: unknown): Promise<T> {
+  return mutate<T>('PATCH', path, body);
+}
+
+export async function deleteJson<T = unknown>(path: string, body?: unknown): Promise<T> {
+  return mutate<T>('DELETE', path, body);
+}
+
+async function mutate<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const csrf = await ensureCsrf();
+  const init: RequestInit = {
+    method,
+    credentials: 'include',
+    headers: {
+      'X-CSRF-Token': csrf,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+  };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const res = await fetch(`${API_BASE}${path}`, init);
+  if (!res.ok) throw await parseError(res);
+  try { return (await res.json()) as T; } catch { return undefined as T; }
+}
+
+// ---------------------------------------------------------------------------
+// Auth + orgs
+// ---------------------------------------------------------------------------
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  email_verified: boolean;
+}
+
+export interface AuthOrg {
+  id: string;
+  name: string;
+  slug: string;
+  role: 'owner' | 'admin' | 'member' | 'viewer';
+  plan: string;
+}
+
+export interface MeResponse {
+  user: AuthUser | null;
+  org: AuthOrg | null;
+  memberships: AuthOrg[];
+}
+
+export const auth = {
+  me: () => getJson<MeResponse>('/auth/me'),
+  signup: (body: { email: string; name: string; company: string; password: string }) =>
+    postJson<MeResponse>('/auth/signup', body),
+  login: (body: { email: string; password: string }) =>
+    postJson<MeResponse>('/auth/login', body),
+  logout: () => postJson<{ status: string }>('/auth/logout').finally(clearCsrfCache),
+  forgotPassword: (email: string) =>
+    postJson<{ status: string }>('/auth/forgot-password', { email }),
+  resetPassword: (token: string, password: string) =>
+    postJson<MeResponse>('/auth/reset-password', { token, password }),
+  verifyEmail: (token: string) =>
+    postJson<{ status: string; email: string }>('/auth/verify-email', { token }),
+  resendVerification: () => postJson<{ status: string }>('/auth/resend-verification'),
+  changePassword: (current: string, password: string) =>
+    postJson<{ status: string }>('/auth/change-password', { current, password }),
+  listSessions: () => getJson<SessionRow[]>('/auth/sessions'),
+  revokeSession: (id: string) => postJson<{ status: string }>(`/auth/sessions/${id}/revoke`),
+  revokeAll: () => postJson<{ status: string; revoked: number }>('/auth/sessions/revoke-all'),
+};
+
+export interface SessionRow {
+  id: string;
+  user_agent: string;
+  ip: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
+export interface MemberRow {
+  user_id: string;
+  email: string;
+  name: string;
+  role: 'owner' | 'admin' | 'member' | 'viewer';
+  joined_at: string;
+}
+
+export interface InviteRow {
+  id: string;
+  email: string;
+  role: string;
+  expires_at: string;
+  expired: boolean;
+}
+
+export interface AuditEvent {
+  id: string;
+  kind: string;
+  actor_user_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export const orgs = {
+  list: () => getJson<AuthOrg[]>('/api/orgs'),
+  switch: (orgId: string) => postJson<{ id: string; name: string }>('/api/orgs/switch', { org_id: orgId }),
+  members: () => getJson<MemberRow[]>('/api/orgs/current/members'),
+  invites: () => getJson<InviteRow[]>('/api/orgs/current/invites'),
+  invite: (email: string, role: 'admin' | 'member' | 'viewer') =>
+    postJson<InviteRow>('/api/orgs/current/invites', { email, role }),
+  acceptInvite: (token: string) =>
+    postJson<{ id: string; name: string }>('/api/orgs/accept-invite', { token }),
+  changeRole: (userId: string, role: 'owner' | 'admin' | 'member' | 'viewer') =>
+    patchJson<{ status: string }>(`/api/orgs/current/members/${userId}`, { role }),
+  removeMember: (userId: string) =>
+    deleteJson<{ status: string }>(`/api/orgs/current/members/${userId}`),
+  leave: () => postJson<{ status: string }>('/api/orgs/current/leave'),
+  audit: () => getJson<AuditEvent[]>('/api/orgs/current/audit'),
+};
+
+// ---------------------------------------------------------------------------
+// Existing simulation API
+// ---------------------------------------------------------------------------
 
 export interface ProjectSummary {
   id: string;

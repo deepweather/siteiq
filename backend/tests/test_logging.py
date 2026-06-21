@@ -77,16 +77,33 @@ def test_analytics_failure_emits_structured_log(caplog):
     assert rec.exc_info is not None
 
 
-def test_camera_stream_exception_logged_not_swallowed(caplog):
+def test_camera_stream_exception_logged_not_swallowed():
     """Drive api/camera.py via a fake WebSocket + a detector that raises.
-    We expect a camera_stream_error log record, not silent failure."""
+    We expect a camera_stream_error log record, not silent failure.
+
+    Uses an explicit MemoryHandler instead of pytest's caplog because
+    earlier tests can leave the global logging config in a state where
+    caplog's propagation chain doesn't see this logger reliably."""
     import api.camera as cam
 
     class _BoomDetector:
         def get_next_frame(self, *_a, **_kw):
             raise RuntimeError("camera bus failure")
 
-    with caplog.at_level(logging.ERROR, logger="siteiq.api.camera"):
+    captured: list[logging.LogRecord] = []
+
+    class _ListHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    h = _ListHandler(level=logging.ERROR)
+    cam.logger.addHandler(h)
+    cam.logger.setLevel(logging.DEBUG)
+    cam.logger.disabled = False
+    # Pytest's logging plugin can globally disable loggers between tests
+    # via `logging.disable(level)` — explicitly clear that.
+    logging.disable(logging.NOTSET)
+    try:
         try:
             _BoomDetector().get_next_frame("cam-1")
         except Exception:
@@ -94,8 +111,10 @@ def test_camera_stream_exception_logged_not_swallowed(caplog):
                 "camera_stream_error",
                 extra={"video_id": "cam-1"},
             )
+    finally:
+        cam.logger.removeHandler(h)
 
-    matching = [r for r in caplog.records if r.message == "camera_stream_error"]
+    matching = [r for r in captured if r.message == "camera_stream_error"]
     assert len(matching) == 1
     assert getattr(matching[0], "video_id", None) == "cam-1"
 

@@ -26,11 +26,24 @@ const makeRec = (id: string, applied = false): Recommendation => ({
 });
 
 describe('Recommendations celebration card (bug #4)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.restoreAllMocks();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('null', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    );
+    // Reset cached CSRF token from prior tests so /auth/csrf is re-fetched.
+    const { clearCsrfCache } = await import('../../services/api');
+    clearCsrfCache();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      if (url.endsWith('/auth/csrf')) {
+        return new Response(JSON.stringify({ csrf_token: 'rec-test-csrf' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('null', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
   });
 
   it('does NOT show celebration card initially', () => {

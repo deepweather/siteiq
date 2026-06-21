@@ -1,8 +1,9 @@
 """FastAPI app entrypoint.
 
 No module-level globals. Long-lived objects (state source, recommendation
-service, detector, latest analytics) live on `app.state` so route handlers
-get them via `Depends(...)` and tests can swap them per-app.
+service, detector, latest analytics, DB session factory, email sender,
+rate limiter) live on `app.state` so route handlers get them via
+`Depends(...)` and tests can swap them per-app.
 """
 from __future__ import annotations
 
@@ -16,15 +17,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from analytics.aggregator import compute_waste_summary
 from api.camera import router as camera_router
+from api.dev import router as dev_router
 from api.routes import router as api_router
 from api.websocket import router as ws_router
+from auth.csrf import CSRFMiddleware
+from auth.email_sender import build_sender_from_settings
+from auth.rate_limit import build_limiter
+from auth.routes import router as auth_router
 from config import ANALYTICS_UPDATE_INTERVAL
+from db.engine import create_db_engine
 import logging_config
+from orgs.routes import router as orgs_router
 from services.recommendation_service import RecommendationService
 from settings import Settings, get_settings
 from simulation.engine import SimulationEngine, run_simulation_loop
@@ -57,6 +68,19 @@ async def _run_analytics_loop(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings: Settings = app.state.settings
+
+    # ---- DB ----
+    engine, session_factory = create_db_engine(settings.database_url)
+    app.state.db_engine = engine
+    app.state.db_session_factory = session_factory
+
+    # ---- Email ----
+    app.state.email_sender = build_sender_from_settings(settings)
+
+    # ---- Rate limit ----
+    app.state.limiter = build_limiter(settings.rate_limit_redis_url)
+
+    # ---- Simulation ----
     source = SimulationEngine(project_id=settings.default_project_id)
     rec_service = RecommendationService(source)
     detector = VideoDetector()
@@ -82,6 +106,7 @@ async def lifespan(app: FastAPI):
         sim_task.cancel()
         analytics_task.cancel()
         detector.cleanup()
+        await engine.dispose()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -94,6 +119,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     logging_config.configure(cfg.log_level, cfg.log_format)
     app = FastAPI(title="SiteIQ Backend", lifespan=lifespan)
     app.state.settings = cfg
+
+    # Order matters: CORS first (handles preflight), then CSRF, then routes.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_origins,
@@ -101,9 +128,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(
+        CSRFMiddleware,
+        allowed_origins=cfg.cors_origins,
+    )
+
+    # Standard error envelope. The frontend expects {error: {code, message, field?}}.
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exc(request: Request, exc: StarletteHTTPException):
+        # ApiError already supplies the envelope as the detail dict.
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "http_error", "message": str(exc.detail)}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_exc(request: Request, exc: RequestValidationError):
+        # Surface the first field-error as the canonical envelope.
+        errors = exc.errors()
+        if errors:
+            first = errors[0]
+            field = ".".join(str(p) for p in first.get("loc", []) if p not in ("body", "query"))
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": {
+                        "code": "validation_error",
+                        "message": first.get("msg", "Invalid input"),
+                        "field": field or None,
+                    }
+                },
+            )
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "validation_error", "message": "Invalid input"}},
+        )
+
+    app.include_router(auth_router)
+    app.include_router(orgs_router)
     app.include_router(api_router)
     app.include_router(ws_router)
     app.include_router(camera_router)
+    if cfg.is_dev:
+        app.include_router(dev_router)
     return app
 
 

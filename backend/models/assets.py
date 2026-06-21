@@ -44,5 +44,4 @@ class WorkerState:
 class EquipmentState:
     OPERATING = "operating"
     IDLE = "idle"
-    REPOSITIONING = "repositioning"
     REMOVED = "removed"

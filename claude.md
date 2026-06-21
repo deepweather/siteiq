@@ -14,7 +14,7 @@ Two disconnected systems exist today:
 SIMULATION (the demo)                    VISION (disconnected proof-of-concept)
 ┌──────────────────────┐                 ┌─────────────────────────┐
 │ SimulationEngine     │                 │ VideoDetector           │
-│ - 50 workers FSM     │                 │ - YOLOv8n on .mp4 files │
+│ - 50–60 workers FSM  │                 │ - YOLOv8n on .mp4 files │
 │ - equipment duty     │                 │ - base64 JPEG frames    │
 │   cycles             │    NO LINK      │ - bounding box coords   │
 │ - position trails    │◄──────────────►│ - confidence scores     │
@@ -80,42 +80,108 @@ npm run dev
 
 Camera feeds require .mp4 files in `backend/vision/videos/`. Two Pexels CC0 videos are downloaded but gitignored. YOLO model weights (`yolov8n.pt`) auto-download on first run.
 
+## Backend architecture (post-refactor)
+
+The backend follows a **state-source seam** so the simulation and (future) live-CV mode share the entire analytics + optimization + API surface. Every consumer depends only on the `SiteStateSource` Protocol, not on `SimulationEngine`. Long-lived objects live on `app.state` and are injected via FastAPI `Depends` — no module-level globals.
+
+```mermaid
+flowchart LR
+    subgraph sources [State sources]
+        Sim[SimulationEngine]
+        Live[LiveSource - future]
+    end
+    Source[SiteStateSource Protocol]
+    Sim --> Source
+    Live -.-> Source
+
+    Source --> Analytics
+    Source --> Optimization
+    Source --> Detail[asset_detail.py]
+    Source --> WS[/ws/]
+    Source --> REST[REST routes]
+```
+
 ## Backend modules
 
 ### `config.py`
-All simulation constants. Key tunables: `TOILET_INTERVAL` (7200s = 2h), `MATERIAL_RUN_INTERVAL` (7200s), equipment hourly rates (€180/120/90 for crane/pump/excavator), `SIM_SECONDS_PER_TICK` (30 — each 100ms real tick = 30s sim time at 1x speed).
+Domain constants only (rates, intervals, sim-clock parameters). Operational knobs live in `settings.py` instead.
+Key tunables: `TOILET_INTERVAL` (7200s = 2h), `MATERIAL_RUN_INTERVAL` (7200s), equipment hourly rates (€180/120/90 for crane/pump/excavator), `SIM_SECONDS_PER_TICK` (30 — each 100ms real tick = 30s sim time at 1× speed).
+
+### `settings.py`
+`Settings` (pydantic-settings `BaseSettings`) with `SITEIQ_*` env-var overrides for CORS origins, default project, log level/format, YOLO model path, videos dir. Document the knobs in `.env.example`.
+
+### `logging_config.py`
+`configure(level, fmt)` installs one stream handler on the root logger. `fmt="json"` swaps in `python-json-logger`'s `JsonFormatter`. Idempotent — safe to call repeatedly. Every backend module uses `logging.getLogger(__name__)`. Zero `print(...)` calls; zero bare `except Exception: pass` (guardrail tests in `test_logging.py`).
+
+### `state/`
+- **`source.py`** — `SiteStateSource` Protocol (`@runtime_checkable`). Surface: `project_id`, `sim_time`, `sim_day`, `site`, `assets`, `asset_by_id`, `zone_by_id`, `workers_in_zone`, `worker_internals_for`, `activity_log_for`, `position_history_for`. Both `SimulationEngine` and (future) `LiveSource` implement this.
 
 ### `models/`
-Pydantic v2 schemas. `Site` has zones + schedule. `Asset` has position, state, metadata. `WasteSummary` aggregates costs. `Recommendation` has from/to positions and savings.
+Pydantic v2 schemas. `Site` has zones + schedule. `Asset` has position, state, metadata. `WasteSummary` aggregates costs. `Recommendation.from_position` / `to_position` use the typed `PositionXY` model.
 
 `Asset.to_broadcast_dict()` produces the compact WebSocket payload — flat dict with id, type, subtype, x, y, state, assigned_zone.
 
 ### `simulation/`
-- **`site_factory.py`** — `PROJECT_TEMPLATES` dict with 3 German construction projects (residential Berlin, commercial Frankfurt, infrastructure Munich). Each defines zones, facilities, equipment, materials, schedule, and worker counts. `create_site_from_template(project_id)` instantiates a full simulation state.
+- **`site_factory.py`** — `PROJECT_TEMPLATES` dict with 3 German construction projects (residential Berlin, commercial Frankfurt, infrastructure Munich). Each defines zones, facilities, equipment, materials, schedule, and worker counts. `create_site_from_template(project_id)` instantiates a full simulation state. Returns `(Site, list[Asset], dict[str, WorkerInternals])`.
 
-- **`engine.py`** — `SimulationEngine` runs the tick loop. Manages position_history (deque per worker, max 150), activity_log (deque per asset, max 50). `tick()` updates all workers and equipment per `dt_sim`. `get_state_snapshot()` returns the WebSocket broadcast payload. `get_asset_detail()` returns rich per-asset data for the detail panel. `load_project()` hot-swaps the entire simulation.
+- **`engine.py`** (~140 LOC, down from 243) — `SimulationEngine` implements `SiteStateSource`. Owns `assets`, `site`, `worker_internals`, `position_history`, `activity_log`, plus three O(1) indexes (`_by_id`, `_facilities_by_subtype`, `_workers_by_zone`) rebuilt on every project switch via `rebuild_indexes()`. `tick()` advances the FSM; `get_state_snapshot()` produces the WS broadcast payload. `load_project()` hot-swaps + re-indexes.
 
-- **`worker_behavior.py`** — Worker FSM: WORKING → WALKING_TO_TOILET/MATERIAL/BREAK → AT_TOILET/CARRYING_MATERIAL/AT_BREAK → WALKING_TO_WORK → WORKING. Tracks cumulative time_working/walking/at_facilities, trip counts, round-trip times. All counters reset daily in `_reset_daily_counters()`. Logs state transitions via `engine.log_activity()`.
+- **`worker_internals.py`** — `@dataclass WorkerInternals` typed state per worker (FSM timers, dwell counters, daily-reset stats). Replaces the old `dict[str, Any]` access. `reset_daily()` clears day-level counters.
 
-- **`equipment_behavior.py`** — Simpler: alternates OPERATING ↔ IDLE based on duty cycles (crane 40min/30min, pump 10min/40min, excavator 42min/18min). Tracks hours_active/hours_idle.
+- **`worker_behavior.py`** — Worker FSM with dispatch table: `STATE_HANDLERS: dict[WorkerState, StateHandler]` maps each state to a single-purpose `_on_*` handler (`_on_working`, `_on_walking_to_toilet`, `_on_at_toilet`, `_on_walking_to_material`, `_on_carrying_material`, `_on_walking_to_break`, `_on_at_break`, `_on_walking_to_work`). Adding a state means: write a handler + add one line. Uses engine's indexed lookups via the local `_WorkerEngine` Protocol (`facilities_by_subtype`, `materials`). Strict-mypy clean.
+
+- **`equipment_behavior.py`** — Alternates OPERATING ↔ IDLE on duty cycles (crane 40/30min, pump 10/40min, excavator 42/18min). Tracks hours_active/hours_idle.
+
+- **`asset_detail.py`** — `asset_detail(source, asset_id)` builds the rich per-asset detail view. Dispatch table `DETAIL_BUILDERS` routes by `asset.type` to `_worker_detail` / `_equipment_detail` / `_facility_detail` / `_material_detail`. Per-type radius + state tables for facility occupancy. Replaces the old 130-LOC `engine.get_asset_detail()` god-method.
 
 ### `analytics/`
-- **`travel.py`** — Per-zone metrics: avg toilet round-trip, trips/day, daily walk cost (trips × RT × hourly_rate), productivity rate. Extrapolates partial-day data via `day_fraction`.
-- **`utilization.py`** — Per-equipment: utilization rate, daily idle cost (normalized to 11h workday × idle_fraction × rate).
-- **`aggregator.py`** — Combines travel + equipment into `WasteSummary` with daily and monthly totals.
+All take `source: SiteStateSource`, not the engine.
+- **`travel.py`** — `compute_travel_metrics(source)`. Per-zone metrics: avg toilet round-trip, trips/day, daily walk cost (trips × RT × hourly_rate), productivity rate. Extrapolates partial-day data via `day_fraction`.
+- **`utilization.py`** — `compute_equipment_utilization(source)`. Per-equipment: utilization rate, daily idle cost (normalized to 11h workday × idle_fraction × rate).
+- **`aggregator.py`** — `compute_waste_summary(source)`. Combines travel + equipment into `WasteSummary` with daily and monthly totals.
 
 ### `optimization/`
-- **`facility_placement.py`** — Weighted k-means (k=2) on zone centers to find optimal toilet positions. Computes distance savings → time savings → euro savings.
-- **`material_staging.py`** — For each material >20m from target zone, finds nearest zone edge for restaging. Savings = distance_saved × 2 (round trip) / worker_speed × trips × hourly_rate.
-- **`equipment_schedule.py`** — Flags equipment <40% utilization for release, <60% for rescheduling. Savings based on idle hours × rate.
+All take `source: SiteStateSource`.
+- **`facility_placement.py`** — Weighted k-means (k=2) on zone centers; greedy-nearest pairing assigns toilets to centroids.
+- **`material_staging.py`** — Picks the zone edge closest to the material's current position to preserve gate-side logistics flow.
+- **`equipment_schedule.py`** — Flags equipment <40% utilization for release, <60% for rescheduling. Daily idle hours = `(1 - utilization) × 11h` — stable from t=0.
+
+### `services/`
+- **`recommendation_service.py`** — `RecommendationService(source, optimizers=…)`. Owns the recommendation cache; tracks the project id of the cached set and auto-invalidates on mismatch. `get()`, `clear()`, `mark_dirty()`, `by_id()`. Constructed once per app at lifespan startup, injected via `Depends(get_rec_service)`.
 
 ### `api/`
-- **`routes.py`** — REST: GET /api/site, /api/recommendations, /api/assets/{id}, /api/projects, /api/portfolio. POST: apply recs, set speed, pause, load project.
-- **`websocket.py`** — WS /ws streams state_update at 10Hz with assets + trails + analytics (analytics only non-null every ~1s).
-- **`camera.py`** — GET /api/cameras lists video feeds. WS /ws/camera/{video_id} streams YOLO-processed frames at ~5Hz.
+- **`deps.py`** — `get_source`, `get_rec_service`, `get_detector` — FastAPI dependency providers that read from `request.app.state` and raise 503 if the dependency isn't ready.
+- **`routes.py`** — REST routes, all dependencies via `Depends(...)`. GET `/api/projects`, `/api/portfolio`, `/api/site`, `/api/recommendations`, `/api/assets/{id}`, `/api/simulation/state`. POST `/api/projects/{id}/load`, `/api/recommendations/{id}/apply`, `/api/recommendations/apply-all`, `/api/simulation/speed`, `/api/simulation/pause`. Sim-only controls (`/api/simulation/*`, project switch) return 501 if the source isn't a `SimulationEngine`.
+- **`websocket.py`** — WS `/ws` streams `state_update` at 10Hz (assets + trails + latest analytics). Analytics value refreshes ~1×/s via the analytics loop.
+- **`camera.py`** — GET `/api/cameras` lists video feeds. WS `/ws/camera/{video_id}` streams YOLO-processed frames at ~5Hz via `asyncio.to_thread()` so inference doesn't stall the event loop. Errors logged via `logger.exception("camera_stream_error", extra={"video_id": ...})`.
 
 ### `vision/`
-- **`detector.py`** — `VideoDetector` wraps YOLOv8n. Loads all .mp4 from vision/videos/, reads frames with OpenCV, runs inference (conf=0.20), returns base64 JPEG + normalized bounding boxes. CLASS_REMAP maps COCO classes to construction labels ("person" → "Worker"). ~18ms inference per frame on Apple Silicon.
+- **`detector.py`** — `VideoDetector` wraps YOLOv8n. Loads all .mp4 from `vision/videos/`, reads frames with OpenCV, runs inference (conf=0.20), returns base64 JPEG + normalized bounding boxes. CLASS_REMAP maps COCO classes to construction labels ("person" → "Worker"). ~18ms inference per frame on Apple Silicon.
+
+### `main.py`
+Thin composition root. `create_app(settings=None)` builds an isolated FastAPI app (tests can pass custom settings). Lifespan handler constructs `SimulationEngine` + `RecommendationService` + `VideoDetector`, stashes them on `app.state`, spawns `run_simulation_loop` and `_run_analytics_loop`, then teardown on yield. No module-level globals.
+
+## Test suite
+
+| Suite | File | Count | Covers |
+|---|---|---|---|
+| Bug regressions | `tests/test_bug_fixes.py` | 19 | Bugs #1, #11, #12, #16-#28 |
+| HTTP API | `tests/test_api.py` | 9 | All REST endpoints via TestClient |
+| Async / YOLO offload | `tests/test_event_loop.py` | 2 | Bug #2 |
+| Edge cases | `tests/test_edge_cases.py` | 14 | Long sim, project flipping, etc. |
+| `SiteStateSource` Protocol | `tests/test_state_source.py` | 9 | Consumers depend only on Protocol |
+| DI | `tests/test_di.py` | 5 | No module globals, `app.state` isolated per app |
+| `WorkerInternals` dataclass | `tests/test_worker_internals.py` | 7 | Typed state contract |
+| `asset_detail` builders | `tests/test_asset_detail.py` | 16 | Per-builder behavior + engine LOC budget |
+| Worker FSM dispatch | `tests/test_worker_fsm.py` | 15 | Each state handler in isolation |
+| Engine index perf | `tests/test_engine_perf.py` | 6 | O(1) lookups, project-switch invalidation |
+| `Settings` | `tests/test_settings.py` | 8 | Env overrides, validation |
+| Logging | `tests/test_logging.py` | 7 | No prints, no bare excepts, structured fields |
+| **Total backend** | | **117** | |
+| Frontend | `frontend/src/**/*.test.{ts,tsx}` | 30 | |
+| **Total** | | **147** | |
+
+Mypy strict scoped to `simulation/worker_internals.py`, `simulation/worker_behavior.py`, `state/source.py` — clean.
 
 ## Frontend modules
 
@@ -125,7 +191,7 @@ Pydantic v2 schemas. `Site` has zones + schedule. `Asset` has position, state, m
 - `useAnalytics` — captures first analytics as baseline, computes savings delta. `resetBaseline()` clears on project switch.
 - Recommendations fetched in `App.tsx` via useEffect + 5s polling (not inside the Optimize tab component).
 
-### Canvas rendering (`renderer.ts`, 769 lines)
+### Canvas rendering (`renderer.ts`, 768 lines)
 Module-level coordinate helpers `px()`, `py()`, `ps()` set from scale/offset each frame. Draws in order: ground → roads → fence → zone structures (phase-specific: excavation contours, foundation grids, structural columns, MEP conduit routes, finishes partitions) → heatmap → trails → materials → facilities → equipment → workers → recommendation arrows → selection highlight → scale bar → legend.
 
 Workers rendered as emoji (👷) with trade-colored dot underneath. Equipment as emoji (🏗️🚛🚜) with status ring and ACTIVE/IDLE label. Facilities as emoji (🚻☕🏢🔧) on background plates. Materials as emoji (🪨🔌🧱🪣).
@@ -157,91 +223,124 @@ Light theme using HSL CSS custom properties (shadcn-style tokens). Primary = ora
 
 ## Known issues and debt
 
+Bugs 1–32 below were all identified during the original audit and have been
+fixed in the working tree. Each entry retains its original description and now
+ends with a `→ Fix:` note describing what was actually changed. Architectural
+debt items 33–38 remain open.
+
 ### Bugs (verified by reading every route handler and data flow)
 
-1. **Recommendation cache not cleared on project switch.** `routes.py:load_project()` clears `_recommendations_cache` (a dead module-level var in routes.py, line 8) but the real cache is `cached_recommendations` in `main.py`. The `recs_dirty` flag only flips on the next analytics tick (~1s later). Between project load and that tick, stale recs from the old project can be served. Fix: `main.py:get_recommendations()` should check `engine.project_id` matches the cached project, or `load_project` should call a clear function in main.py.
+1. **Recommendation cache not cleared on project switch.** `routes.py:load_project()` clears `_recommendations_cache` (a dead module-level var in routes.py, line 8) but the real cache is `cached_recommendations` in `main.py`. The `recs_dirty` flag only flips on the next analytics tick (~1s later). Between project load and that tick, stale recs from the old project can be served.
+   → Fix: `main.py` exposes `clear_recommendations_cache()`, passed into `init_routes`. `routes.load_project` calls it on switch. `get_recommendations()` also re-checks `engine.project_id` against a cached `cached_project_id` and forces a refresh on mismatch. The dead `_recommendations_cache` var in `routes.py` is removed.
 
-2. **YOLO inference blocks the async event loop.** `camera.py` line 36 calls `_detector.get_next_frame()` synchronously (~18ms of OpenCV + YOLO per frame, per connected camera). During inference, the entire FastAPI event loop stalls — sim WebSocket pushes, REST endpoints, everything. Fix: wrap in `asyncio.to_thread()`.
+2. **YOLO inference blocks the async event loop.** `camera.py` line 36 calls `_detector.get_next_frame()` synchronously (~18ms of OpenCV + YOLO per frame, per connected camera). During inference, the entire FastAPI event loop stalls — sim WebSocket pushes, REST endpoints, everything.
+   → Fix: `camera.py` now runs `_detector.get_next_frame` via `asyncio.to_thread()`, freeing the event loop during OpenCV/YOLO work.
 
 3. **No fetch error handling in frontend.** Every function in `api.ts` does `fetch(url).then(r => r.json())` without checking `r.ok` or `r.status`. A backend 500 or network error returns `undefined` which propagates silently through the UI. Any transient failure (e.g., during project switch) can put components into broken states.
+   → Fix: introduced shared `getJson<T>()` / `postJson()` helpers in `api.ts` that throw on non-2xx. All API functions go through them. Existing call sites already use `.catch()` so errors no longer silently produce `undefined`.
 
 ### Frontend bugs (verified by reading every component)
 
 4. **`justAppliedAll` never resets in `Recommendations.tsx`.** Set to `true` on Apply All (line 27), never set back to `false`. The celebration card stays visible forever — survives rec refreshes and project switches. Only clears on full page reload.
+   → Fix: replaced boolean state with a `celebrationSig` (the recommendation-set signature captured when Apply-All ran). The card is visible only while the current recsSignature still matches, so a project switch or new rec set auto-hides it. A timer also auto-clears it after 8 s.
 
-5. **Three hardcoded `localhost:8000` URLs outside `api.ts`.** `useWebSocket.ts` line 28 (`ws://localhost:8000/ws`), `CameraFeed.tsx` (`ws://localhost:8000/ws/camera/...`), `SiteMap.tsx` line 32 (`http://localhost:8000/api/cameras`). The `API_BASE` constant in `api.ts` is not shared with these.
+5. **Three hardcoded `localhost:8000` URLs outside `api.ts`.** `useWebSocket.ts` line 28, `CameraFeed.tsx`, `SiteMap.tsx` line 32.
+   → Fix: `api.ts` exports `API_BASE` and `WS_BASE`. `useWebSocket.ts`, `CameraFeed.tsx`, and `SiteMap.tsx` (now via a new `fetchCameras()` helper) all import them. Single source of truth.
 
-6. **WebSocket reconnect can create duplicate connections.** `useWebSocket.ts` line 26 checks `readyState === OPEN` but a WS in `CONNECTING` state (0) passes the guard, allowing a second `new WebSocket()` before the first resolves.
+6. **WebSocket reconnect can create duplicate connections.** `useWebSocket.ts` line 26 checks `readyState === OPEN` but a WS in `CONNECTING` state (0) passes the guard.
+   → Fix: guard now skips when an existing socket is OPEN *or* CONNECTING.
 
-7. **`handlePortfolioSelect` in `App.tsx` ignores its `projectId` parameter.** Line 50-53: receives `projectId` but only calls `handleProjectChange()` which doesn't use it. The project was already loaded in `Portfolio.tsx` via `loadProject(id)`, so it works, but the parameter is dead.
+7. **`handlePortfolioSelect` in `App.tsx` ignores its `projectId` parameter.**
+   → Fix: parameter removed from the implementation (TypeScript allows fewer params than the prop signature). A comment explains why: `Portfolio.tsx` calls `loadProject(id)` before invoking the callback.
 
-8. **Portfolio ROI uses hardcoded 0.65 recovery factor.** `Portfolio.tsx` line 89: `totalWaste * 0.65 / systemCostTotal`. This magic number is disconnected from actual optimization savings.
+8. **Portfolio ROI uses hardcoded 0.65 recovery factor.**
+   → Fix: extracted to a named constant `RECOVERABLE_WASTE_FRACTION = 0.55` (centered on the doc'd 40–65% post-apply reduction range) plus `SYSTEM_COST_PER_SITE = 2000`. Computation flows from those.
 
 ### Renderer bugs (`renderer.ts`)
 
-9. **`ctx.measureText` before `ctx.font` in zone labels.** Line 150 measures text with the font from the previous draw call, not the zone label font set on line 154. Zone label backgrounds may be wrong width.
+9. **`ctx.measureText` before `ctx.font` in zone labels.**
+   → Fix: reordered — `ctx.font` set first, then `measureText`. Label backgrounds now size correctly.
 
-10. **Module-level mutable state (`S`, `OX`, `OY`).** Lines 12-14 — global variables stomped on every `renderFrame` call. Would break if two canvases rendered simultaneously.
+10. **Module-level mutable state (`S`, `OX`, `OY`).** Would break if two canvases rendered simultaneously.
+    → Mitigated: full refactor would touch 68 call sites; instead documented the invariant (synchronous render, single-threaded JS, reset at the top of every `renderFrame`). Listed in code comments with the explicit instruction to pass transform state explicitly if a second renderer instance is ever added. The bug is dormant in current architecture.
 
 ### Simulation logic bugs
 
-11. **Worker gets permanently stuck if no facility exists.** `worker_behavior.py` lines 84-116: if `_find_nearest` returns `None`, the timer check passes but the `return` still executes. The timer stays negative forever, so the worker can never reach the material or break checks below. Every tick hits the same failing toilet check and returns.
+11. **Worker gets permanently stuck if no facility exists.** Timer stays negative forever.
+    → Fix: when `_find_nearest` returns `None`, the timer is now re-jittered to a fresh positive value before returning. The worker no longer pins on an unresolvable check every tick.
 
-12. **k-means toilet assignment is order-based, not distance-based.** `facility_placement.py` line 69: toilet-1 always gets cluster 0, toilet-2 gets cluster 1, regardless of which toilet is closer to which cluster centroid. Can recommend longer moves than necessary.
+12. **k-means toilet assignment is order-based, not distance-based.**
+    → Fix: toilets are now greedily paired to their *nearest* cluster centroid; sort+nearest-pair pass replaces `enumerate(toilets)`.
 
 ### Timeline bugs
 
-13. **Timeline hardcodes zone IDs and TOTAL_DAYS=120.** `Timeline.tsx` lines 9-16: zone IDs are `['zone-a'...'zone-e']` — misses `zone-f` in Frankfurt. Labels show "Zone A" instead of actual zone names ("Turm Ost"). TOTAL_DAYS=120 overflows for the Munich bridge project (runs to day 210, current day 135 is off-screen).
+13. **Timeline hardcodes zone IDs and TOTAL_DAYS=120.**
+    → Fix: `Timeline.tsx` now takes `zones` as a prop and derives the zone list (preserves real labels like "Turm Ost"). `TOTAL_DAYS` is computed from `max(schedule.end_day, currentDay + 5, 120)`, so the Munich bridge (day 210) and any future longer schedule render correctly. Day markers are rebuilt for the actual span. `App.tsx`/`RightPanel.tsx` plumb zones through.
 
 ### Additional frontend issues
 
-14. **CameraFeed RAF loop restarts 5x/sec.** `useEffect` deps include `detectionCount` and `inferenceMs` (state), which update on every WS message. The effect tears down and recreates the RAF loop each time, causing flicker. Should use refs.
+14. **CameraFeed RAF loop restarts 5x/sec.** `useEffect` deps include `detectionCount` and `inferenceMs`.
+    → Fix: stats moved into refs (`detectionCountRef`, `inferenceMsRef`); deps reduced to `[connected, label]`. The RAF loop now mounts once.
 
-15. **CameraFeed has no WebSocket reconnection.** If the WS closes, the feed dies permanently. No retry logic.
+15. **CameraFeed has no WebSocket reconnection.**
+    → Fix: added the same exponential-backoff reconnect loop used in `useWebSocket` (1 s → 10 s cap), with cancellation on unmount.
 
-16. **AssetDetail zone name is reformatted ID, not actual label.** `zone-a` becomes "ZONE A" instead of the zone's real label.
+16. **AssetDetail zone name is reformatted ID, not actual label.**
+    → Fix: backend `engine.get_asset_detail()` now emits `assigned_zone_label` and `needed_in_zone_label`. Frontend prefers the label, falls back to the ID.
 
-17. **MaterialDetail zone name regex doesn't capitalize zone letter.** `'zone-c'.replace('zone-', 'Zone ').replace(/^\w/, ...)` produces "Zone c" — the regex only matches the start of string ("Z"), not the zone letter.
+17. **MaterialDetail zone name regex doesn't capitalize zone letter.**
+    → Fix: superseded by #16 — uses real `needed_in_zone_label` from the backend instead of regex-mangling the ID.
 
-18. **EquipmentDetail duty cycle progress bar is wrong during idle.** `cycle_timer_s / operate_duration_s` — during idle phase the timer counts toward `idle_duration_s` but divides by `operate_duration_s`. Exceeds 100% for equipment with idle > operate duration.
+18. **EquipmentDetail duty cycle progress bar is wrong during idle.**
+    → Fix: cycle denominator now switches between `operate_duration_s` / `idle_duration_s` based on `data.state` (`operating` vs `idle`).
 
-19. **`onMouseUp` doesn't restore cursor to `grab`.** Cursor stays `grabbing` after mouseup until the next mousemove triggers hover check.
+19. **`onMouseUp` doesn't restore cursor to `grab`.**
+    → Fix: `onMouseUp` now resets `canvas.style.cursor = 'grab'` before handling the click.
 
-20. **`onMouseMove` registered on both canvas AND window.** Double hit-test on every mouse move when over canvas (iterates 62 assets twice at 60fps).
+20. **`onMouseMove` registered on both canvas AND window.**
+    → Fix: dropped the canvas-level listener; kept only the window-level one (which already handles both hover and drag-while-outside-canvas).
 
-21. **`AssetUpdate` type missing `assigned_zone`.** Backend sends it, frontend type doesn't declare it.
+21. **`AssetUpdate` type missing `assigned_zone`.**
+    → Fix: added `assigned_zone?: string` to the interface.
 
 22. **`formatCurrencyCompact` exported but never used.**
+    → Fix: removed.
 
 ### Backend logic issues found on full read
 
-23. **`equipment_schedule.py` `daily_idle_hours` formula is unstable.** `hours_idle * (11.0 / total)` — when `total` is small (early sim), this inflates massively. Should use `(1 - utilization) * 11.0`.
+23. **`equipment_schedule.py` `daily_idle_hours` formula is unstable.**
+    → Fix: replaced `hours_idle * (11.0 / max(total, 0.1))` with `(1.0 - utilization) * WORKDAY_HOURS`. Stable from t=0.
 
-24. **`equipment_schedule.py` hardcodes fallback zone "D".** `asset.assigned_zone or 'D'` — equipment never has `assigned_zone` set, so every equipment description says "Zone D".
+24. **`equipment_schedule.py` hardcodes fallback zone "D".**
+    → Fix: now resolves the actual zone label via `engine.get_zone_by_id`, falling back to "its current zone" when none is assigned.
 
-25. **`material_staging.py` picks zone edge nearest to center, not to material.** The "optimal" position is always the edge with the shortest distance to the zone's own center, which is always the shorter dimension. Should minimize distance from material's current position or from workers.
+25. **`material_staging.py` picks zone edge nearest to center, not to material.**
+    → Fix: candidates are now scored by distance from the material's current position (the staging side closest to the existing logistics path), not by distance from the zone center.
 
-26. **Facility detail only checks toilet/breakroom.** `get_asset_detail` office and toolcrib subtypes never match any condition, so `workers_present` is always empty for them.
+26. **Facility detail only checks toilet/breakroom.**
+    → Fix: per-subtype radius table + per-subtype required-state table. `office` and `toolcrib` now report any nearby worker (no required state).
 
-27. **`EquipmentState.REPOSITIONING` defined but never used.** Dead enum value.
+27. **`EquipmentState.REPOSITIONING` defined but never used.**
+    → Fix: removed.
 
-28. **`Recommendation.from_position` and `to_position` are untyped `dict`.** Should be `dict[str, float]` or a proper model.
+28. **`Recommendation.from_position` and `to_position` are untyped `dict`.**
+    → Fix: introduced `PositionXY` Pydantic model; both fields now use it. Route handler updated from `rec.to_position["x"]` → `rec.to_position.x`.
 
-### Dead code
+### Dead code (all removed)
 
-16. **`CONSTRUCTION_CLASSES` dict in `detector.py`** (lines 11-22) — defined but never referenced.
-17. **`_recommendations_cache` in `routes.py`** (line 8) — declared and cleared in `load_project` but never read.
-18. **`_find_nearest_facility` in `travel.py`** — defined but never called.
-19. **`MetricCard.tsx`** — component defined but never imported.
+29. ~~`CONSTRUCTION_CLASSES` dict in `detector.py`~~ — removed.
+30. ~~`_recommendations_cache` in `routes.py`~~ — removed (see #1).
+31. ~~`_find_nearest_facility` in `travel.py`~~ — removed.
+32. ~~`MetricCard.tsx`~~ — file deleted.
 
-### Architectural debt
+### Architectural debt (still open)
 
-8. **Camera feeds are disconnected from simulation** — the core coherence problem. See architecture section above.
-9. **Timeline lookahead is hardcoded** — static text in `Timeline.tsx`, not driven by simulation state. Damages trust if questioned.
-10. **Portfolio waste estimates are rough** — uses a fixed formula (`workers * 50 * 0.12 * 22 + equipment * 150 * 0.4 * 11 * 22`), not actual simulation data per project.
-11. **CORS hardcoded** to localhost:5173 and :5174 only.
-12. **No tests** — `tests/__init__.py` exists but is empty.
-13. **No auth, no persistence, no database** — demo only. All state is in-memory and resets on restart.
+33. **Camera feeds are disconnected from simulation** — the core coherence problem. See architecture section above.
+34. **Timeline lookahead is hardcoded** — static text in `Timeline.tsx`, not driven by simulation state. Damages trust if questioned.
+35. **Portfolio waste estimates are rough** — uses a fixed formula (`workers * 50 * 0.12 * 22 + equipment * 150 * 0.4 * 11 * 22`), not actual simulation data per project.
+36. **CORS hardcoded** to localhost:5173 and :5174 only.
+37. **No tests** — `tests/__init__.py` exists but is empty.
+38. **No auth, no persistence, no database** — demo only. All state is in-memory and resets on restart.
 
 ### API route → frontend mapping (verified)
 

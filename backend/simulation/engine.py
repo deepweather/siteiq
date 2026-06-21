@@ -1,17 +1,25 @@
 import asyncio
-from collections import deque
+from collections import defaultdict, deque
 
 from config import (
     SIM_SECONDS_PER_TICK, WORKDAY_START, WORKDAY_END,
     MAX_TRAIL_LENGTH, SIM_TICK_INTERVAL, ANALYTICS_UPDATE_INTERVAL,
 )
-from models.assets import WorkerState
+from models.assets import Asset, WorkerState
+from simulation.density import DensityGrid
 from simulation.site_factory import create_initial_site, create_site_from_template
 from simulation.worker_behavior import update_worker
 from simulation.equipment_behavior import update_equipment
 
 
+# Re-exported for tests / external callers that want the grid resolution
+DENSITY_CELL_SIZE = 4
+
+
 class SimulationEngine:
+    # Backwards-compat alias for test_heatmap.py
+    DENSITY_CELL_SIZE = DENSITY_CELL_SIZE
+
     def __init__(self, project_id: str = "westhafen"):
         self.project_id = project_id
         self._init_from_project(project_id)
@@ -25,11 +33,34 @@ class SimulationEngine:
         self.position_history: dict[str, deque] = {}
         self.activity_log: dict[str, deque] = {}
         self.running: bool = True
+        self._density = DensityGrid(cell_size=DENSITY_CELL_SIZE)
 
         for a in self.assets:
             if a.type == "worker":
                 self.position_history[a.id] = deque(maxlen=MAX_TRAIL_LENGTH)
             self.activity_log[a.id] = deque(maxlen=50)
+
+        self._rebuild_indexes()
+
+    def rebuild_indexes(self) -> None:
+        """Public re-index entry point. Call after mutating `self.assets`
+        directly (e.g. in tests). Project switches call this automatically."""
+        self._rebuild_indexes()
+
+    def _rebuild_indexes(self) -> None:
+        """O(1) lookup tables. Rebuilt whenever the assets list is replaced
+        (project switch, asset added/removed by an applied recommendation)."""
+        self._by_id: dict[str, Asset] = {a.id: a for a in self.assets}
+        self._by_type: dict[str, list[Asset]] = defaultdict(list)
+        self._facilities_by_subtype: dict[str, list[Asset]] = defaultdict(list)
+        self._workers_by_zone: dict[str, list[Asset]] = defaultdict(list)
+        self._zone_by_id: dict[str, object] = {z.id: z for z in self.site.zones}
+        for a in self.assets:
+            self._by_type[a.type].append(a)
+            if a.type == "facility":
+                self._facilities_by_subtype[a.subtype].append(a)
+            if a.type == "worker" and a.assigned_zone:
+                self._workers_by_zone[a.assigned_zone].append(a)
 
     def load_project(self, project_id: str):
         self.project_id = project_id
@@ -62,21 +93,23 @@ class SimulationEngine:
         self._record_positions()
 
     def _reset_daily_counters(self):
-        for wid, internals in self.worker_internals.items():
-            internals["toilet_trips_today"] = 0
-            internals["material_trips_today"] = 0
-            internals["toilet_total_round_trip"] = 0.0
-            internals["material_total_round_trip"] = 0.0
-            internals["time_working"] = 0.0
-            internals["time_walking"] = 0.0
-            internals["time_at_facilities"] = 0.0
+        for internals in self.worker_internals.values():
+            internals.reset_daily()
+        self._density.reset()  # heatmap is a per-day view
 
     def _record_positions(self):
         for asset in self.assets:
-            if asset.type == "worker" and asset.id in self.position_history:
+            if asset.type != "worker":
+                continue
+            if asset.id in self.position_history:
                 self.position_history[asset.id].append(
                     (round(asset.position.x, 1), round(asset.position.y, 1))
                 )
+            self._density.record(asset)
+
+    def density_snapshot(self) -> dict:
+        """Cumulative foot-traffic snapshot for the current sim day."""
+        return self._density.snapshot(self.site.width, self.site.height)
 
     def get_state_snapshot(self) -> dict:
         trails = {}
@@ -90,125 +123,40 @@ class SimulationEngine:
             "trails": trails,
         }
 
-    def get_asset_by_id(self, asset_id: str):
-        for a in self.assets:
-            if a.id == asset_id:
-                return a
-        return None
+    # ── SiteStateSource Protocol surface (O(1) indexed lookups) ─────────
 
-    def get_zone_by_id(self, zone_id: str):
-        for z in self.site.zones:
-            if z.id == zone_id:
-                return z
-        return None
+    def asset_by_id(self, asset_id: str):
+        return self._by_id.get(asset_id)
 
-    def get_workers_in_zone(self, zone_id: str) -> list:
-        return [a for a in self.assets if a.type == "worker" and a.assigned_zone == zone_id]
+    def zone_by_id(self, zone_id: str):
+        return self._zone_by_id.get(zone_id)
 
-    def get_asset_detail(self, asset_id: str) -> dict | None:
-        asset = self.get_asset_by_id(asset_id)
-        if not asset:
-            return None
+    def workers_in_zone(self, zone_id: str) -> list:
+        # Defensive copy so callers can mutate without corrupting the index
+        return list(self._workers_by_zone.get(zone_id, ()))
 
-        from math import sqrt
-        from simulation.equipment_behavior import EQUIPMENT_DUTY_CYCLES
-        from config import WORKDAY_START, WORKDAY_END
+    # Internal accessors used by hot paths (worker_behavior._find_nearest).
+    def facilities_by_subtype(self, subtype: str) -> list[Asset]:
+        return self._facilities_by_subtype.get(subtype, [])
 
-        base = {
-            "id": asset.id,
-            "type": asset.type,
-            "subtype": asset.subtype,
-            "x": round(asset.position.x, 1),
-            "y": round(asset.position.y, 1),
-            "state": asset.state,
-            "assigned_zone": asset.assigned_zone,
-        }
+    def materials(self) -> list[Asset]:
+        return self._by_type.get("material", [])
 
-        if asset.type == "worker":
-            internals = self.worker_internals.get(asset.id, {})
-            t_work = internals.get("time_working", 0)
-            t_walk = internals.get("time_walking", 0)
-            t_fac = internals.get("time_at_facilities", 0)
-            total_t = t_work + t_walk + t_fac
-            productivity = t_work / total_t if total_t > 0 else 0
+    def worker_internals_for(self, worker_id: str):
+        """Protocol method — typed dataclass in step 3."""
+        return self.worker_internals.get(worker_id)
 
-            toilet_trips = internals.get("toilet_trips_today", 0)
-            toilet_rt = internals.get("toilet_total_round_trip", 0)
-            avg_toilet_rt = (toilet_rt / toilet_trips / 60) if toilet_trips > 0 else 0
+    def activity_log_for(self, asset_id: str):
+        return list(self.activity_log.get(asset_id, []))
 
-            mat_trips = internals.get("material_trips_today", 0)
-            mat_rt = internals.get("material_total_round_trip", 0)
-            avg_mat_rt = (mat_rt / mat_trips / 60) if mat_trips > 0 else 0
+    def position_history_for(self, worker_id: str) -> list:
+        deque_ = self.position_history.get(worker_id)
+        return list(deque_) if deque_ is not None else []
 
-            base["detail"] = {
-                "productivity": round(productivity, 3),
-                "total_distance_m": round(internals.get("total_distance", 0), 1),
-                "toilet_trips_today": toilet_trips,
-                "avg_toilet_round_trip_min": round(avg_toilet_rt, 1),
-                "material_trips_today": mat_trips,
-                "avg_material_round_trip_min": round(avg_mat_rt, 1),
-                "time_working_s": round(t_work, 0),
-                "time_walking_s": round(t_walk, 0),
-                "time_at_facilities_s": round(t_fac, 0),
-            }
-            trail = list(self.position_history.get(asset.id, []))
-            base["trail"] = trail
-
-        elif asset.type == "equipment":
-            hours_active = asset.metadata.get("hours_active", 0)
-            hours_idle = asset.metadata.get("hours_idle", 0)
-            total = hours_active + hours_idle
-            utilization = hours_active / total if total > 0.01 else 0.5
-            cycle = EQUIPMENT_DUTY_CYCLES.get(asset.subtype, {})
-            workday_h = (WORKDAY_END - WORKDAY_START) / 3600
-            from config import CRANE_HOURLY_RATE, PUMP_HOURLY_RATE, EXCAVATOR_HOURLY_RATE
-            rates = {"tower_crane": CRANE_HOURLY_RATE, "concrete_pump": PUMP_HOURLY_RATE, "excavator": EXCAVATOR_HOURLY_RATE}
-            rate = rates.get(asset.subtype, 200)
-            daily_idle_cost = (1 - utilization) * workday_h * rate
-
-            base["detail"] = {
-                "utilization": round(utilization, 3),
-                "hours_active": round(hours_active, 2),
-                "hours_idle": round(hours_idle, 2),
-                "daily_idle_cost": round(daily_idle_cost, 2),
-                "cycle_timer_s": round(asset.metadata.get("cycle_timer", 0), 0),
-                "operate_duration_s": cycle.get("operate_duration", 0),
-                "idle_duration_s": cycle.get("idle_duration", 0),
-            }
-
-        elif asset.type == "facility":
-            workers_here = []
-            for a in self.assets:
-                if a.type != "worker":
-                    continue
-                if asset.subtype == "toilet" and a.state == "at_toilet":
-                    d = sqrt((a.position.x - asset.position.x)**2 + (a.position.y - asset.position.y)**2)
-                    if d < 5:
-                        workers_here.append({"id": a.id, "subtype": a.subtype})
-                elif asset.subtype == "breakroom" and a.state == "at_break":
-                    d = sqrt((a.position.x - asset.position.x)**2 + (a.position.y - asset.position.y)**2)
-                    if d < 10:
-                        workers_here.append({"id": a.id, "subtype": a.subtype})
-            base["detail"] = {
-                "workers_present": workers_here,
-            }
-
-        elif asset.type == "material":
-            target_zone_id = asset.metadata.get("needed_in_zone")
-            dist = None
-            if target_zone_id:
-                zone = self.get_zone_by_id(target_zone_id)
-                if zone:
-                    dx = asset.position.x - (zone.x + zone.width / 2)
-                    dy = asset.position.y - (zone.y + zone.height / 2)
-                    dist = round(sqrt(dx*dx + dy*dy), 1)
-            base["detail"] = {
-                "needed_in_zone": target_zone_id,
-                "distance_to_zone_m": dist,
-            }
-
-        base["activity_log"] = list(self.activity_log.get(asset_id, []))
-        return base
+    # NB: `get_asset_detail()` lived here pre-step-4 (130 LOC of per-type
+    # branching). It has been extracted to `simulation.asset_detail.asset_detail`,
+    # which takes a SiteStateSource directly. The route in api/routes.py
+    # now calls that service instead.
 
 
 async def run_simulation_loop(engine: SimulationEngine):

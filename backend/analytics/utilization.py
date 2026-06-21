@@ -1,5 +1,6 @@
 from models.analytics import EquipmentMetrics
 from models.assets import EquipmentState
+from state.source import SiteStateSource
 from config import (
     CRANE_HOURLY_RATE, PUMP_HOURLY_RATE, EXCAVATOR_HOURLY_RATE,
     WORKDAY_START, WORKDAY_END,
@@ -14,9 +15,9 @@ HOURLY_RATES = {
 WORKDAY_HOURS = (WORKDAY_END - WORKDAY_START) / 3600  # 11 hours
 
 
-def compute_equipment_utilization(engine) -> list[EquipmentMetrics]:
+def compute_equipment_utilization(source: SiteStateSource) -> list[EquipmentMetrics]:
     results = []
-    for asset in engine.assets:
+    for asset in source.assets:
         if asset.type != "equipment":
             continue
 

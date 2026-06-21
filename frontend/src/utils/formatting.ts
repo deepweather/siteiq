@@ -7,19 +7,6 @@ export function formatCurrency(value: number): string {
   }).format(value);
 }
 
-export function formatCurrencyCompact(value: number): string {
-  if (Math.abs(value) >= 1000) {
-    return new Intl.NumberFormat('de-DE', {
-      style: 'currency',
-      currency: 'EUR',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 1,
-      notation: 'compact',
-    }).format(value);
-  }
-  return formatCurrency(value);
-}
-
 export function formatSimTime(simTime: number): string {
   const totalSeconds = Math.floor(simTime);
   const hours = Math.floor(totalSeconds / 3600);

@@ -8,19 +8,6 @@ from ultralytics import YOLO
 VIDEOS_DIR = os.path.join(os.path.dirname(__file__), "videos")
 MODEL_PATH = "yolov8n.pt"
 
-CONSTRUCTION_CLASSES = {
-    0: "person",       # worker
-    1: "bicycle",
-    2: "car",
-    3: "motorcycle",
-    5: "bus",
-    7: "truck",
-    24: "backpack",
-    25: "umbrella",
-    56: "chair",
-    63: "laptop",
-}
-
 CLASS_REMAP = {
     "person": "Worker",
     "truck": "Truck",

@@ -1,94 +1,110 @@
+"""FastAPI app entrypoint.
+
+No module-level globals. Long-lived objects (state source, recommendation
+service, detector, latest analytics) live on `app.state` so route handlers
+get them via `Depends(...)` and tests can swap them per-app.
+"""
+from __future__ import annotations
+
 import asyncio
-import sys
+import logging
 import os
+import sys
 
 # Ensure the backend directory is on the path for local imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from config import ANALYTICS_UPDATE_INTERVAL
-from simulation.engine import SimulationEngine, run_simulation_loop
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
 from analytics.aggregator import compute_waste_summary
-from optimization.facility_placement import optimize_toilet_placement
-from optimization.material_staging import optimize_material_staging
-from optimization.equipment_schedule import optimize_equipment
-from api.routes import router as api_router, init_routes
-from api.websocket import router as ws_router, init_ws
-from api.camera import router as camera_router, init_camera
+from api.camera import router as camera_router
+from api.routes import router as api_router
+from api.websocket import router as ws_router
+from config import ANALYTICS_UPDATE_INTERVAL
+import logging_config
+from services.recommendation_service import RecommendationService
+from settings import Settings, get_settings
+from simulation.engine import SimulationEngine, run_simulation_loop
 from vision.detector import VideoDetector
 
-engine: SimulationEngine | None = None
-latest_analytics = None
-cached_recommendations: list = []
-recs_dirty = True
+
+logger = logging.getLogger("siteiq.main")
 
 
-def get_latest_analytics():
-    return latest_analytics
-
-
-def get_recommendations():
-    global cached_recommendations, recs_dirty
-    if recs_dirty or not cached_recommendations:
-        recs = []
-        recs.extend(optimize_toilet_placement(engine))
-        recs.extend(optimize_material_staging(engine))
-        recs.extend(optimize_equipment(engine))
-
-        applied_ids = {r.id for r in cached_recommendations if r.applied}
-        for r in recs:
-            if r.id in applied_ids:
-                r.applied = True
-
-        cached_recommendations = recs
-        recs_dirty = False
-    return cached_recommendations
-
-
-async def run_analytics_loop(eng: SimulationEngine):
-    global latest_analytics, recs_dirty
-    while eng.running:
+async def _run_analytics_loop(app: FastAPI) -> None:
+    """Background task: refresh WasteSummary every ANALYTICS_UPDATE_INTERVAL s
+    and tell the rec service to recompute on next access."""
+    while True:
+        source = getattr(app.state, "source", None)
+        rec_service = getattr(app.state, "rec_service", None)
+        if source is None or rec_service is None:
+            await asyncio.sleep(ANALYTICS_UPDATE_INTERVAL)
+            continue
         try:
-            latest_analytics = compute_waste_summary(eng)
-            recs_dirty = True
-        except Exception as e:
-            print(f"Analytics error: {e}")
+            app.state.latest_analytics = compute_waste_summary(source)
+            rec_service.mark_dirty()
+        except Exception:
+            logger.exception(
+                "analytics_tick_failed",
+                extra={"project_id": getattr(source, "project_id", None)},
+            )
         await asyncio.sleep(ANALYTICS_UPDATE_INTERVAL)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global engine
-    engine = SimulationEngine()
-    init_routes(engine, get_recommendations)
-    init_ws(engine, get_latest_analytics)
-
+    settings: Settings = app.state.settings
+    source = SimulationEngine(project_id=settings.default_project_id)
+    rec_service = RecommendationService(source)
     detector = VideoDetector()
-    init_camera(detector)
-    print(f"Vision: loaded {len(detector.get_video_ids())} camera feeds: {detector.get_video_ids()}")
 
-    sim_task = asyncio.create_task(run_simulation_loop(engine))
-    analytics_task = asyncio.create_task(run_analytics_loop(engine))
-    yield
-    engine.running = False
-    sim_task.cancel()
-    analytics_task.cancel()
-    detector.cleanup()
+    app.state.source = source
+    app.state.rec_service = rec_service
+    app.state.detector = detector
+    app.state.latest_analytics = None
+
+    logger.info(
+        "vision_initialised",
+        extra={"camera_count": len(detector.get_video_ids()),
+               "camera_ids": detector.get_video_ids()},
+    )
+
+    sim_task = asyncio.create_task(run_simulation_loop(source))
+    analytics_task = asyncio.create_task(_run_analytics_loop(app))
+
+    try:
+        yield
+    finally:
+        source.running = False
+        sim_task.cancel()
+        analytics_task.cancel()
+        detector.cleanup()
 
 
-app = FastAPI(title="SiteIQ Backend", lifespan=lifespan)
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Factory — used by tests to spin up isolated apps with their own state.
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    Pass an explicit `settings` to override env-driven defaults (useful
+    for tests that want a specific log level / CORS origin / project).
+    """
+    cfg = settings or get_settings()
+    logging_config.configure(cfg.log_level, cfg.log_format)
+    app = FastAPI(title="SiteIQ Backend", lifespan=lifespan)
+    app.state.settings = cfg
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cfg.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(api_router)
+    app.include_router(ws_router)
+    app.include_router(camera_router)
+    return app
 
-app.include_router(api_router)
-app.include_router(ws_router)
-app.include_router(camera_router)
+
+app = create_app()

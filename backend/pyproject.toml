@@ -10,7 +10,31 @@ dependencies = [
     "websockets>=12.0",
     "ultralytics>=8.4.71",
     "opencv-python-headless>=4.13.0.92",
+    "pydantic-settings>=2.14.2",
+    "python-json-logger>=4.1.0",
 ]
 
 [dependency-groups]
-dev = []
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "pytest-asyncio>=1.4.0",
+    "mypy>=1.10",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.mypy]
+# Strict-scoped to the modules that have been refactored to typed state in
+# step 3. Broaden over time. `follow_imports = silent` keeps cascading into
+# not-yet-refactored modules (models/, optimization/) from blocking us.
+files = [
+    "simulation/worker_internals.py",
+    "simulation/worker_behavior.py",
+    "state/source.py",
+]
+strict = true
+ignore_missing_imports = true
+follow_imports = "silent"

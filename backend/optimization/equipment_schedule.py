@@ -1,6 +1,10 @@
 from models.analytics import Recommendation
 from models.assets import EquipmentState
-from config import CRANE_HOURLY_RATE, PUMP_HOURLY_RATE, EXCAVATOR_HOURLY_RATE, WORKING_DAYS_PER_MONTH
+from state.source import SiteStateSource
+from config import (
+    CRANE_HOURLY_RATE, PUMP_HOURLY_RATE, EXCAVATOR_HOURLY_RATE,
+    WORKING_DAYS_PER_MONTH, WORKDAY_START, WORKDAY_END,
+)
 
 HOURLY_RATES = {
     "tower_crane": CRANE_HOURLY_RATE,
@@ -14,11 +18,20 @@ EQUIPMENT_LABELS = {
     "excavator": "Excavator",
 }
 
+WORKDAY_HOURS = (WORKDAY_END - WORKDAY_START) / 3600  # 11h
 
-def optimize_equipment(engine) -> list[Recommendation]:
+
+def _zone_label(source: SiteStateSource, zone_id: str | None) -> str:
+    if not zone_id:
+        return "its current zone"
+    zone = source.zone_by_id(zone_id)
+    return zone.label if zone else zone_id
+
+
+def optimize_equipment(source: SiteStateSource) -> list[Recommendation]:
     recommendations = []
 
-    for asset in engine.assets:
+    for asset in source.assets:
         if asset.type != "equipment":
             continue
         if asset.state == EquipmentState.REMOVED:
@@ -30,9 +43,12 @@ def optimize_equipment(engine) -> list[Recommendation]:
         utilization = hours_active / total if total > 0.1 else 0.5
         rate = HOURLY_RATES.get(asset.subtype, 200)
         label = EQUIPMENT_LABELS.get(asset.subtype, asset.subtype)
+        zone_label = _zone_label(source, asset.assigned_zone)
+        # Stable: idle fraction × an 11h workday. Doesn't blow up early in the
+        # sim when only a few minutes of activity have been recorded.
+        daily_idle_hours = (1.0 - utilization) * WORKDAY_HOURS
 
         if utilization < 0.40:
-            daily_idle_hours = hours_idle * (11.0 / max(total, 0.1))
             daily_savings = daily_idle_hours * rate * 0.8
 
             recommendations.append(Recommendation(
@@ -40,7 +56,7 @@ def optimize_equipment(engine) -> list[Recommendation]:
                 type="reschedule_equipment",
                 title=f"Release {label}",
                 description=f"{label} at {utilization:.0%} utilization. "
-                            f"Return to rental pool — Zone {asset.assigned_zone or 'D'} doesn't require "
+                            f"Return to rental pool — {zone_label} doesn't require "
                             f"continuous operation at this phase.",
                 target_asset_id=asset.id,
                 from_position={"x": round(asset.position.x, 1), "y": round(asset.position.y, 1)},
@@ -49,7 +65,6 @@ def optimize_equipment(engine) -> list[Recommendation]:
                 monthly_savings=round(daily_savings * WORKING_DAYS_PER_MONTH, 2),
             ))
         elif utilization < 0.60:
-            daily_idle_hours = hours_idle * (11.0 / max(total, 0.1))
             daily_savings = daily_idle_hours * rate * 0.3
 
             recommendations.append(Recommendation(

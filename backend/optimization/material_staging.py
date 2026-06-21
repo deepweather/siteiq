@@ -1,5 +1,6 @@
 from math import sqrt
 from models.analytics import Recommendation
+from state.source import SiteStateSource
 from config import LOADED_HOURLY_RATE, WORKER_SPEED, WORKING_DAYS_PER_MONTH
 
 
@@ -7,10 +8,10 @@ def _distance(x1, y1, x2, y2) -> float:
     return sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
 
 
-def optimize_material_staging(engine) -> list[Recommendation]:
+def optimize_material_staging(source: SiteStateSource) -> list[Recommendation]:
     recommendations = []
 
-    for asset in engine.assets:
+    for asset in source.assets:
         if asset.type != "material":
             continue
 
@@ -18,7 +19,7 @@ def optimize_material_staging(engine) -> list[Recommendation]:
         if not target_zone_id:
             continue
 
-        zone = engine.get_zone_by_id(target_zone_id)
+        zone = source.zone_by_id(target_zone_id)
         if not zone:
             continue
 
@@ -28,33 +29,40 @@ def optimize_material_staging(engine) -> list[Recommendation]:
         if current_dist < 20:
             continue
 
-        # Place adjacent to the nearest zone edge, 3m outside boundary
+        # Candidate staging positions along each zone edge, 3m outside the
+        # boundary. We pick the candidate closest to the material's existing
+        # location so the logistics path from the gate doesn't change — the
+        # original implementation always chose the shorter zone dimension,
+        # which could move material to the opposite side of the site.
         margin = 3
         candidates = [
-            (zone.x - margin, zy),               # left edge
+            (zone.x - margin, zy),                # left edge
             (zone.x + zone.width + margin, zy),   # right edge
             (zx, zone.y - margin),                # top edge
             (zx, zone.y + zone.height + margin),  # bottom edge
         ]
         best_pos = None
-        best_new_dist = float("inf")
+        best_pos_score = float("inf")
         for cx, cy in candidates:
-            cx = max(2, min(engine.site.width - 2, cx))
-            cy = max(2, min(engine.site.height - 2, cy))
-            d = _distance(cx, cy, zx, zy)
-            if d < best_new_dist:
-                best_new_dist = d
+            cx = max(2, min(source.site.width - 2, cx))
+            cy = max(2, min(source.site.height - 2, cy))
+            # Score = candidate's distance from where the material is now.
+            score = _distance(asset.position.x, asset.position.y, cx, cy)
+            if score < best_pos_score:
+                best_pos_score = score
                 best_pos = (cx, cy)
 
         if best_pos is None:
             continue
 
         opt_x, opt_y = best_pos
+        # Savings calculation uses worker→zone distance (the relevant cost).
+        best_new_dist = _distance(opt_x, opt_y, zx, zy)
         dist_saved = current_dist - best_new_dist
         if dist_saved < 5:
             continue
 
-        workers_in_zone = len(engine.get_workers_in_zone(target_zone_id))
+        workers_in_zone = len(source.workers_in_zone(target_zone_id))
         if workers_in_zone == 0:
             continue
 

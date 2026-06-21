@@ -1,5 +1,6 @@
 from math import sqrt
 from models.analytics import Recommendation
+from state.source import SiteStateSource
 from config import LOADED_HOURLY_RATE, WORKER_SPEED, WORKING_DAYS_PER_MONTH
 
 
@@ -17,14 +18,14 @@ def _weighted_centroid(points_weights: list[tuple[float, float, float]]) -> tupl
     return cx, cy
 
 
-def optimize_toilet_placement(engine) -> list[Recommendation]:
+def optimize_toilet_placement(source: SiteStateSource) -> list[Recommendation]:
     recommendations = []
-    toilets = [a for a in engine.assets if a.type == "facility" and a.subtype == "toilet"]
-    zones = engine.site.zones
+    toilets = [a for a in source.assets if a.type == "facility" and a.subtype == "toilet"]
+    zones = source.site.zones
 
     zone_data = []
     for z in zones:
-        workers = engine.get_workers_in_zone(z.id)
+        workers = source.workers_in_zone(z.id)
         n = len(workers)
         if n > 0:
             zone_data.append((z.x + z.width / 2, z.y + z.height / 2, float(n)))
@@ -54,22 +55,39 @@ def optimize_toilet_placement(engine) -> list[Recommendation]:
 
         # Clamp to site bounds with margin
         margin = 5
-        c1x = max(margin, min(engine.site.width - margin, c1x))
-        c1y = max(margin, min(engine.site.height - margin, c1y))
-        c2x = max(margin, min(engine.site.width - margin, c2x))
-        c2y = max(margin, min(engine.site.height - margin, c2y))
+        c1x = max(margin, min(source.site.width - margin, c1x))
+        c1y = max(margin, min(source.site.height - margin, c1y))
+        c2x = max(margin, min(source.site.width - margin, c2x))
+        c2y = max(margin, min(source.site.height - margin, c2y))
 
         optimal_positions = [(c1x, c1y), (c2x, c2y)]
     else:
         cx, cy = _weighted_centroid(zone_data)
-        cx = max(5, min(engine.site.width - 5, cx))
-        cy = max(5, min(engine.site.height - 5, cy))
+        cx = max(5, min(source.site.width - 5, cx))
+        cy = max(5, min(source.site.height - 5, cy))
         optimal_positions = [(cx, cy)]
 
-    for i, toilet in enumerate(toilets):
-        if i >= len(optimal_positions):
+    # Assign each toilet to its NEAREST optimal position (greedy by closest
+    # pair) rather than by enumeration order — otherwise toilet-1 might be
+    # sent to the cluster centroid that toilet-2 is already next to.
+    remaining_targets = list(optimal_positions)
+    toilet_target: dict[str, tuple[float, float]] = {}
+    for toilet in sorted(toilets, key=lambda t: t.id):
+        if not remaining_targets:
             break
-        opt_x, opt_y = optimal_positions[i]
+        best_idx = 0
+        best_d = float("inf")
+        for slot, (tx, ty) in enumerate(remaining_targets):
+            d = _distance(toilet.position.x, toilet.position.y, tx, ty)
+            if d < best_d:
+                best_d = d
+                best_idx = slot
+        toilet_target[toilet.id] = remaining_targets.pop(best_idx)
+
+    for toilet in toilets:
+        if toilet.id not in toilet_target:
+            continue
+        opt_x, opt_y = toilet_target[toilet.id]
         old_x, old_y = toilet.position.x, toilet.position.y
 
         improvement = _distance(old_x, old_y, opt_x, opt_y)
@@ -95,12 +113,15 @@ def optimize_toilet_placement(engine) -> list[Recommendation]:
         affected_workers = total_workers / len(toilets)
         daily_savings = time_saved_per_trip * trips_per_day * affected_workers * LOADED_HOURLY_RATE / 60
 
+        # Friendly title: "Move Portable Toilet #1 closer to crews"
+        num_match = toilet.id.rsplit("-", 1)[-1]
+        toilet_label = f"Portable Toilet #{num_match}" if num_match.isdigit() else toilet.id.replace("-", " ").title()
         recommendations.append(Recommendation(
             id=f"opt-{toilet.id}",
             type="move_facility",
-            title=f"Relocate {toilet.id.replace('-', ' ').title()}",
-            description=f"Move from far corner to worker-weighted centroid. "
-                        f"Reduces average round-trip by {time_saved_per_trip:.0f} min per visit.",
+            title=f"Move {toilet_label} closer to crews",
+            description=f"Relocate to worker-weighted centroid. "
+                        f"Cuts the average toilet round-trip by {time_saved_per_trip:.0f} min per visit.",
             target_asset_id=toilet.id,
             from_position={"x": round(old_x, 1), "y": round(old_y, 1)},
             to_position={"x": round(opt_x, 1), "y": round(opt_y, 1)},

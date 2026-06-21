@@ -5,6 +5,7 @@ import type { Recommendation } from '../../types/analytics';
 import { Toggle } from '../common/Toggle';
 import { renderFrame } from './renderer';
 import { CameraFeed } from './CameraFeed';
+import { fetchCameras, fetchHeatmap, type HeatmapData } from '../../services/api';
 
 interface SiteMapProps {
   zones: Zone[];
@@ -15,9 +16,12 @@ interface SiteMapProps {
   recommendations: Recommendation[];
   selectedAssetId: string | null;
   onAssetSelect: (id: string | null) => void;
+  /** Last asset modified by an Apply action — drives the pulsing
+   *  "recently changed" ring on the map. */
+  recentApply?: { assetId: string; ts: number } | null;
 }
 
-export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, recommendations, selectedAssetId, onAssetSelect }: SiteMapProps) {
+export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, recommendations, selectedAssetId, onAssetSelect, recentApply }: SiteMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const sizeRef = useRef({ w: 0, h: 0 });
@@ -26,15 +30,36 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, re
   const [showRecs, setShowRecs] = useState(true);
   const [showCameras, setShowCameras] = useState(false);
   const [cameraIds, setCameraIds] = useState<string[]>([]);
+  // Heatmap data lives in a ref so we don't re-render the SiteMap effect
+  // on every poll tick (would tear down the RAF loop).
+  const heatmapRef = useRef<HeatmapData | null>(null);
 
   useEffect(() => {
     if (showCameras && cameraIds.length === 0) {
-      fetch('http://localhost:8000/api/cameras')
-        .then(r => r.json())
-        .then((cams: { id: string }[]) => setCameraIds(cams.map(c => c.id)))
+      fetchCameras()
+        .then((cams) => setCameraIds(cams.map(c => c.id)))
         .catch(() => {});
     }
   }, [showCameras, cameraIds.length]);
+
+  // Poll the heatmap endpoint while the toggle is on. Stop polling +
+  // discard the grid when toggled off so the renderer falls back to the
+  // empty-state and zone phases are clearly readable.
+  useEffect(() => {
+    if (!showHeatmap) {
+      heatmapRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      fetchHeatmap()
+        .then((data) => { if (!cancelled) heatmapRef.current = data; })
+        .catch(() => {});
+    };
+    load();
+    const interval = window.setInterval(load, 1500);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [showHeatmap]);
 
   const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
   const dragRef = useRef<{ active: boolean; moved: boolean; startX: number; startY: number; startPanX: number; startPanY: number }>({
@@ -186,6 +211,9 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, re
     const onMouseUp = (e: MouseEvent) => {
       const wasDrag = dragRef.current.moved;
       dragRef.current.active = false;
+      // Restore cursor immediately rather than waiting for the next
+      // mousemove to recompute hover state.
+      canvas.style.cursor = 'grab';
       if (!wasDrag) {
         handleCanvasClick(e);
       }
@@ -200,28 +228,77 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, re
     canvas.style.cursor = 'grab';
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('mousedown', onMouseDown);
-    canvas.addEventListener('mousemove', onMouseMove);
+    // Window-level mousemove handles both hover hit-testing AND drag-with-
+    // cursor-outside-canvas. Registering it on the canvas as well would
+    // double the per-frame hit test cost (the loop iterates all assets).
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     canvas.addEventListener('dblclick', onDblClick);
 
     let raf: number;
+    // Per-asset interpolated "display position". Lazily seeded the first
+    // time we see each asset, then lerped toward the true position each
+    // frame. Big jumps (apply-rec moves) become smooth glides; per-tick
+    // FSM movement stays imperceptibly close to the real value.
+    const displayPos = new Map<string, { x: number; y: number }>();
+    // Quick-lookup: if a position delta is larger than this, treat as a
+    // teleport that should animate slowly. Otherwise we use a fast lerp.
+    const TELEPORT_THRESHOLD_M = 8;
+    const FAST_LERP = 0.5; // ~6m worker steps catch up in 1 frame
+    const SLOW_LERP = 0.12; // ~700ms ease toward target for big moves
+
     const loop = () => {
       const dpr = window.devicePixelRatio || 1;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const { scale, offset } = getTransform();
+
+      // Build a display-asset list: same shape as assets, but with
+      // smoothed x/y. Reuse the AssetUpdate object identity so any
+      // downstream code that compares by ref doesn't notice.
+      const truth = assetsRef.current;
+      const displayAssets: AssetUpdate[] = [];
+      const seen = new Set<string>();
+      for (const a of truth) {
+        seen.add(a.id);
+        const prev = displayPos.get(a.id);
+        if (!prev) {
+          displayPos.set(a.id, { x: a.x, y: a.y });
+          displayAssets.push(a);
+          continue;
+        }
+        const dx = a.x - prev.x;
+        const dy = a.y - prev.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 0.05) {
+          // Snap & avoid drift
+          prev.x = a.x;
+          prev.y = a.y;
+          displayAssets.push(a);
+          continue;
+        }
+        const lerp = dist > TELEPORT_THRESHOLD_M ? SLOW_LERP : FAST_LERP;
+        prev.x += dx * lerp;
+        prev.y += dy * lerp;
+        // Clone the asset object with smoothed coords (cheap — small object)
+        displayAssets.push({ ...a, x: prev.x, y: prev.y });
+      }
+      // Drop stale entries (assets removed by load_project)
+      for (const id of displayPos.keys()) if (!seen.has(id)) displayPos.delete(id);
+
       renderFrame(
         ctx,
         zones,
         siteWidth,
         siteHeight,
-        assetsRef.current,
+        displayAssets,
         trailsRef.current,
         { showTrails, showHeatmap, showRecs },
         recommendations,
         scale,
         offset,
         selectedAssetId,
+        heatmapRef.current,
+        recentApply,
       );
       raf = requestAnimationFrame(loop);
     };
@@ -232,12 +309,11 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, re
       resizeObserver.disconnect();
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('mousedown', onMouseDown);
-      canvas.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       canvas.removeEventListener('dblclick', onDblClick);
     };
-  }, [zones, siteWidth, siteHeight, assetsRef, trailsRef, showTrails, showHeatmap, showRecs, recommendations, getTransform, handleCanvasClick, selectedAssetId]);
+  }, [zones, siteWidth, siteHeight, assetsRef, trailsRef, showTrails, showHeatmap, showRecs, recommendations, getTransform, handleCanvasClick, selectedAssetId, recentApply]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0">

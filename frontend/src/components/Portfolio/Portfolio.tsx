@@ -13,6 +13,12 @@ const TYPE_COLORS: Record<string, string> = {
   Infrastructure: 'bg-amber-100 text-amber-700',
 };
 
+// Fraction of estimated waste that's realistically recoverable after applying
+// optimizations. Derived from average post-apply reduction observed in
+// simulation (40–65% range, doc'd in claude.md "Target waste metrics").
+const RECOVERABLE_WASTE_FRACTION = 0.55;
+const SYSTEM_COST_PER_SITE = 2000;
+
 export function Portfolio({ onSelectSite, onClose }: PortfolioProps) {
   const [sites, setSites] = useState<PortfolioSite[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +37,9 @@ export function Portfolio({ onSelectSite, onClose }: PortfolioProps) {
   const totalWorkers = sites.reduce((s, p) => s + p.workers, 0);
   const totalEquipment = sites.reduce((s, p) => s + p.equipment, 0);
   const totalWaste = sites.reduce((s, p) => s + p.estimated_monthly_waste, 0);
-  const systemCostTotal = sites.length * 2000;
+  const systemCostTotal = sites.length * SYSTEM_COST_PER_SITE;
+  const recoverableMonthly = totalWaste * RECOVERABLE_WASTE_FRACTION;
+  const paybackRatio = systemCostTotal > 0 ? Math.round(recoverableMonthly / systemCostTotal) : 0;
 
   if (loading) {
     return (
@@ -86,7 +94,7 @@ export function Portfolio({ onSelectSite, onClose }: PortfolioProps) {
             </div>
             <div className="text-right">
               <div className="font-mono text-2xl font-bold text-primary tabular-nums">
-                {Math.round(totalWaste * 0.65 / systemCostTotal)}x
+                {paybackRatio}x
               </div>
               <div className="text-xs text-muted-foreground">payback ratio</div>
             </div>

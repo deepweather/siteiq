@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { WasteSummary, Recommendation } from '../../types/analytics';
-import type { ScheduleEntry } from '../../types/site';
+import type { ScheduleEntry, Zone } from '../../types/site';
 import { WasteReport } from './WasteReport';
 import { Recommendations } from './Recommendations';
 import { Timeline } from './Timeline';
@@ -12,16 +12,18 @@ interface RightPanelProps {
   savings: { toilet: number; material: number; equipment: number; total: number } | null;
   pendingSavingsMonthly: number;
   schedule: ScheduleEntry[];
+  zones: Zone[];
   currentDay: number;
   recommendations: Recommendation[];
   onRecsChange: (recs: Recommendation[]) => void;
+  onApplied?: (rec: Recommendation) => void;
   selectedAssetId: string | null;
   onAssetDeselect: () => void;
 }
 
 type Tab = 'waste' | 'recs' | 'timeline';
 
-export function RightPanel({ waste, baseline, savings, pendingSavingsMonthly, schedule, currentDay, recommendations, onRecsChange, selectedAssetId, onAssetDeselect }: RightPanelProps) {
+export function RightPanel({ waste, baseline, savings, pendingSavingsMonthly, schedule, zones, currentDay, recommendations, onRecsChange, onApplied, selectedAssetId, onAssetDeselect }: RightPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('waste');
 
   const tabs: { id: Tab; label: string }[] = [
@@ -71,6 +73,7 @@ export function RightPanel({ waste, baseline, savings, pendingSavingsMonthly, sc
                 baseline={baseline}
                 savings={savings}
                 pendingSavingsMonthly={pendingSavingsMonthly}
+                zones={zones}
                 onSwitchToOptimize={() => setActiveTab('recs')}
               />
             )}
@@ -78,10 +81,12 @@ export function RightPanel({ waste, baseline, savings, pendingSavingsMonthly, sc
               <Recommendations
                 recommendations={recommendations}
                 onRecsChange={onRecsChange}
+                onApplied={onApplied}
+                zones={zones}
               />
             )}
             {activeTab === 'timeline' && (
-              <Timeline schedule={schedule} currentDay={currentDay} />
+              <Timeline schedule={schedule} currentDay={currentDay} zones={zones} />
             )}
           </div>
         </>

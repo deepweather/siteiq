@@ -47,6 +47,15 @@ export default {
         mono: ["'JetBrains Mono'", 'ui-monospace', 'monospace'],
         sans: ["'Inter'", 'system-ui', '-apple-system', 'sans-serif'],
       },
+      keyframes: {
+        'toast-in': {
+          '0%': { opacity: '0', transform: 'translateY(12px) scale(0.97)' },
+          '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
+      },
+      animation: {
+        'toast-in': 'toast-in 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+      },
     },
   },
   plugins: [],

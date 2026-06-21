@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { AssetUpdate, Trail } from '../types/assets';
 import type { WasteSummary } from '../types/analytics';
+import { WS_BASE } from '../services/api';
 
 interface WebSocketState {
   assetsRef: React.MutableRefObject<AssetUpdate[]>;
@@ -23,9 +24,14 @@ export function useWebSocket(): WebSocketState {
   const reconnectDelay = useRef(1000);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Skip if an existing socket is OPEN or still CONNECTING (race during
+    // reconnect could otherwise spawn parallel sockets).
+    const existing = wsRef.current;
+    if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
 
-    const ws = new WebSocket('ws://localhost:8000/ws');
+    const ws = new WebSocket(`${WS_BASE}/ws`);
     wsRef.current = ws;
 
     ws.onopen = () => {

@@ -1,21 +1,34 @@
 import { PHASE_COLORS, PHASE_LABELS } from '../../utils/colors';
-import type { ScheduleEntry } from '../../types/site';
+import type { ScheduleEntry, Zone } from '../../types/site';
 
 interface TimelineProps {
   schedule: ScheduleEntry[];
   currentDay: number;
+  zones: Zone[];
 }
 
-const TOTAL_DAYS = 120;
+function buildDayMarkers(totalDays: number): number[] {
+  // ~5 evenly-spaced markers rounded to the nearest 10 days for legibility.
+  const step = Math.max(10, Math.round(totalDays / 4 / 10) * 10);
+  const markers: number[] = [];
+  for (let d = 0; d <= totalDays; d += step) markers.push(d);
+  if (markers[markers.length - 1] !== totalDays) markers.push(totalDays);
+  return markers;
+}
 
-export function Timeline({ schedule, currentDay }: TimelineProps) {
-  const zoneIds = ['zone-a', 'zone-b', 'zone-c', 'zone-d', 'zone-e'];
-  const zoneLabels: Record<string, string> = {
-    'zone-a': 'Zone A', 'zone-b': 'Zone B', 'zone-c': 'Zone C',
-    'zone-d': 'Zone D', 'zone-e': 'Zone E',
-  };
+export function Timeline({ schedule, currentDay, zones }: TimelineProps) {
+  // Zones from the actual project — preserves real labels (e.g. "Turm Ost")
+  // and includes any zone count (the Frankfurt project has zone-f).
+  const zoneIds = zones.map(z => z.id);
+  const zoneLabels: Record<string, string> = Object.fromEntries(
+    zones.map(z => [z.id, z.label]),
+  );
 
-  const dayMarkers = [0, 30, 60, 90, 120];
+  // Project duration derived from the schedule, with headroom for the
+  // current-day marker (Munich's bridge runs to day 210, current day 135).
+  const scheduleMax = schedule.reduce((m, s) => Math.max(m, s.end_day), 0);
+  const TOTAL_DAYS = Math.max(120, scheduleMax, currentDay + 5);
+  const dayMarkers = buildDayMarkers(TOTAL_DAYS);
 
   return (
     <div className="space-y-4">

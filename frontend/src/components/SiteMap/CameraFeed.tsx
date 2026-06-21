@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
+import { WS_BASE } from '../../services/api';
 
 interface Detection {
   class: string;
@@ -32,29 +33,59 @@ export function CameraFeed({ videoId, label }: CameraFeedProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [connected, setConnected] = useState(false);
-  const [detectionCount, setDetectionCount] = useState(0);
-  const [inferenceMs, setInferenceMs] = useState(0);
+  // Stats live in refs (read by the draw RAF loop) so they don't re-trigger
+  // the draw effect. Previously these were state and caused the RAF loop
+  // to tear down and recreate 5×/sec, producing visible flicker.
+  const detectionCountRef = useRef(0);
+  const inferenceMsRef = useRef(0);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const frameRef = useRef<FrameData | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket(`ws://localhost:8000/ws/camera/${videoId}`);
+    let cancelled = false;
+    let ws: WebSocket | null = null;
+    let reconnectDelay = 1000;
+    let reconnectTimer: number | null = null;
     const img = new Image();
     imgRef.current = img;
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
+    const connect = () => {
+      if (cancelled) return;
+      ws = new WebSocket(`${WS_BASE}/ws/camera/${videoId}`);
 
-    ws.onmessage = (event) => {
-      const data: FrameData = JSON.parse(event.data);
-      frameRef.current = data;
-      setDetectionCount(data.detections.length);
-      setInferenceMs(data.inference_ms);
-      img.src = `data:image/jpeg;base64,${data.image}`;
+      ws.onopen = () => {
+        setConnected(true);
+        reconnectDelay = 1000;
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        if (cancelled) return;
+        reconnectTimer = window.setTimeout(() => {
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
+          connect();
+        }, reconnectDelay);
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
+
+      ws.onmessage = (event) => {
+        const data: FrameData = JSON.parse(event.data);
+        frameRef.current = data;
+        detectionCountRef.current = data.detections.length;
+        inferenceMsRef.current = data.inference_ms;
+        img.src = `data:image/jpeg;base64,${data.image}`;
+      };
     };
 
+    connect();
+
     return () => {
-      ws.close();
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
     };
   }, [videoId]);
 
@@ -157,19 +188,19 @@ export function CameraFeed({ videoId, label }: CameraFeedProps) {
       ctx.textBaseline = 'bottom';
       ctx.textAlign = 'left';
       ctx.fillStyle = '#22c55e';
-      ctx.fillText(`${detectionCount} objects`, 4, ch - 2);
+      ctx.fillText(`${detectionCountRef.current} objects`, 4, ch - 2);
       ctx.fillStyle = '#888';
       ctx.textAlign = 'center';
       ctx.fillText('YOLOv8 · SiteIQ Vision', cw / 2, ch - 2);
       ctx.textAlign = 'right';
-      ctx.fillText(`${inferenceMs.toFixed(0)}ms`, cw - 4, ch - 2);
+      ctx.fillText(`${inferenceMsRef.current.toFixed(0)}ms`, cw - 4, ch - 2);
 
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
 
     return () => cancelAnimationFrame(raf);
-  }, [connected, detectionCount, inferenceMs, label]);
+  }, [connected, label]);
 
   return (
     <div ref={containerRef} className="flex-1 relative bg-black min-h-[120px]">

@@ -35,14 +35,19 @@ class WasteSummary(BaseModel):
     equipment_metrics: list[EquipmentMetrics]
 
 
+class PositionXY(BaseModel):
+    x: float
+    y: float
+
+
 class Recommendation(BaseModel):
     id: str
     type: str
     title: str
     description: str
     target_asset_id: str
-    from_position: dict
-    to_position: dict | None
+    from_position: PositionXY
+    to_position: PositionXY | None = None
     daily_savings: float
     monthly_savings: float
     applied: bool = False

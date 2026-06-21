@@ -1,12 +1,13 @@
 from models.analytics import WasteSummary
 from analytics.travel import compute_travel_metrics
 from analytics.utilization import compute_equipment_utilization
+from state.source import SiteStateSource
 from config import WORKING_DAYS_PER_MONTH
 
 
-def compute_waste_summary(engine) -> WasteSummary:
-    travel_metrics = compute_travel_metrics(engine)
-    equipment_metrics = compute_equipment_utilization(engine)
+def compute_waste_summary(source: SiteStateSource) -> WasteSummary:
+    travel_metrics = compute_travel_metrics(source)
+    equipment_metrics = compute_equipment_utilization(source)
 
     toilet_daily = sum(z.daily_toilet_walk_cost for z in travel_metrics)
     material_daily = sum(z.daily_material_walk_cost for z in travel_metrics)

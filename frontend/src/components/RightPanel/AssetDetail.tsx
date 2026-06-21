@@ -93,7 +93,7 @@ export function AssetDetail({ assetId, onClose }: AssetDetailProps) {
           <div className="flex items-center gap-2 mt-1">
             {data.assigned_zone && (
               <span className="text-xs text-muted-foreground">
-                {data.assigned_zone.replace('zone-', 'Zone ').toUpperCase()}
+                {data.assigned_zone_label || data.assigned_zone}
               </span>
             )}
             <span className="text-xs text-muted-foreground font-mono">{data.id}</span>
@@ -120,7 +120,7 @@ export function AssetDetail({ assetId, onClose }: AssetDetailProps) {
       </div>
 
       {data.type === 'worker' && data.detail && <WorkerDetail detail={data.detail} />}
-      {data.type === 'equipment' && data.detail && <EquipmentDetail detail={data.detail} />}
+      {data.type === 'equipment' && data.detail && <EquipmentDetail detail={data.detail} state={data.state} />}
       {data.type === 'facility' && data.detail && <FacilityDetail detail={data.detail} />}
       {data.type === 'material' && data.detail && <MaterialDetail detail={data.detail} />}
 
@@ -172,10 +172,20 @@ function WorkerDetail({ detail }: { detail: NonNullable<AssetDetailData['detail'
   );
 }
 
-function EquipmentDetail({ detail }: { detail: NonNullable<AssetDetailData['detail']> }) {
+function EquipmentDetail({ detail, state }: { detail: NonNullable<AssetDetailData['detail']>; state: string }) {
   const util = detail.utilization || 0;
-  const cyclePct = (detail.operate_duration_s && detail.cycle_timer_s != null)
-    ? (detail.cycle_timer_s / (detail.operate_duration_s || 1)) * 100
+  // Cycle timer counts toward operate_duration when OPERATING and toward
+  // idle_duration when IDLE. Using the wrong denominator made the bar
+  // exceed 100% for equipment whose idle phase is longer than its operate
+  // phase (e.g. concrete pump: 10min on / 40min off).
+  const cycleDuration =
+    state === 'operating'
+      ? detail.operate_duration_s
+      : state === 'idle'
+      ? detail.idle_duration_s
+      : detail.operate_duration_s;
+  const cyclePct = (cycleDuration && detail.cycle_timer_s != null)
+    ? (detail.cycle_timer_s / cycleDuration) * 100
     : 0;
 
   return (
@@ -256,7 +266,7 @@ function MaterialDetail({ detail }: { detail: NonNullable<AssetDetailData['detai
         {detail.needed_in_zone && (
           <StatBox
             label="Target zone"
-            value={detail.needed_in_zone.replace('zone-', 'Zone ').replace(/^\w/, c => c.toUpperCase())}
+            value={detail.needed_in_zone_label || detail.needed_in_zone}
           />
         )}
         {detail.distance_to_zone_m != null && (

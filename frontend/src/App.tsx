@@ -6,6 +6,7 @@ import { TopBar } from './components/TopBar/TopBar';
 import { SiteMap } from './components/SiteMap/SiteMap';
 import { RightPanel } from './components/RightPanel/RightPanel';
 import { Portfolio } from './components/Portfolio/Portfolio';
+import { ToastContainer } from './components/common/ToastContainer';
 import { fetchRecommendations } from './services/api';
 import type { Recommendation } from './types/analytics';
 
@@ -16,6 +17,9 @@ export default function App() {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [showPortfolio, setShowPortfolio] = useState(false);
+  /** Last asset modified by an Apply action (drives the "pulsing glow" on
+   *  the map and the smooth-move animation lookup). */
+  const [recentApply, setRecentApply] = useState<{ assetId: string; ts: number } | null>(null);
   const recsInterval = useRef<number | null>(null);
 
   const loadRecs = useCallback(async () => {
@@ -35,6 +39,10 @@ export default function App() {
     setRecommendations(recs);
   }, []);
 
+  const handleApplied = useCallback((rec: Recommendation) => {
+    setRecentApply({ assetId: rec.target_asset_id, ts: performance.now() });
+  }, []);
+
   const handleAssetSelect = useCallback((id: string | null) => {
     setSelectedAssetId(id);
   }, []);
@@ -47,7 +55,10 @@ export default function App() {
     setTimeout(loadRecs, 1000);
   }, [reload, resetBaseline, loadRecs]);
 
-  const handlePortfolioSelect = useCallback((projectId: string) => {
+  const handlePortfolioSelect = useCallback(() => {
+    // Portfolio.tsx already calls loadProject(id) before invoking this
+    // callback, so we just need to refresh local state. The projectId
+    // argument declared on the prop is intentionally unused here.
     handleProjectChange();
     setShowPortfolio(false);
   }, [handleProjectChange]);
@@ -98,6 +109,7 @@ export default function App() {
           recommendations={recommendations}
           selectedAssetId={selectedAssetId}
           onAssetSelect={handleAssetSelect}
+          recentApply={recentApply}
         />
         <RightPanel
           waste={currentWaste}
@@ -105,13 +117,16 @@ export default function App() {
           savings={savings}
           pendingSavingsMonthly={pendingSavingsMonthly}
           schedule={site.schedule}
+          zones={site.zones}
           currentDay={simDay}
           recommendations={recommendations}
           onRecsChange={handleRecsChange}
+          onApplied={handleApplied}
           selectedAssetId={selectedAssetId}
           onAssetDeselect={() => setSelectedAssetId(null)}
         />
       </div>
+      <ToastContainer />
     </div>
   );
 }

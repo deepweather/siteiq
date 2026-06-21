@@ -1,32 +1,16 @@
-from math import sqrt
 from models.analytics import ZoneTravelMetrics
-from config import LOADED_HOURLY_RATE, WORKDAY_START, WORKDAY_END, WORKER_SPEED
+from state.source import SiteStateSource
+from config import LOADED_HOURLY_RATE, WORKDAY_START, WORKDAY_END
 
 
-def _distance(p1, p2) -> float:
-    dx = p1.x - p2.x
-    dy = p1.y - p2.y
-    return sqrt(dx * dx + dy * dy)
-
-
-def _find_nearest_facility(pos, assets, subtype) -> float:
-    best = float("inf")
-    for a in assets:
-        if a.type == "facility" and a.subtype == subtype:
-            d = _distance(pos, a.position)
-            if d < best:
-                best = d
-    return best if best < float("inf") else 100.0
-
-
-def compute_travel_metrics(engine) -> list[ZoneTravelMetrics]:
+def compute_travel_metrics(source: SiteStateSource) -> list[ZoneTravelMetrics]:
     results = []
     workday_seconds = WORKDAY_END - WORKDAY_START
-    elapsed = max(engine.sim_time - WORKDAY_START, 1.0)
+    elapsed = max(source.sim_time - WORKDAY_START, 1.0)
     day_fraction = min(elapsed / workday_seconds, 1.0)
 
-    for zone in engine.site.zones:
-        workers = engine.get_workers_in_zone(zone.id)
+    for zone in source.site.zones:
+        workers = source.workers_in_zone(zone.id)
         if not workers:
             continue
 
@@ -39,14 +23,28 @@ def compute_travel_metrics(engine) -> list[ZoneTravelMetrics]:
         total_time_facilities = 0.0
 
         for w in workers:
-            internals = engine.worker_internals[w.id]
-            total_time_working += internals["time_working"]
-            total_time_walking += internals["time_walking"]
-            total_time_facilities += internals["time_at_facilities"]
-            total_toilet_trips += internals["toilet_trips_today"]
-            total_toilet_rt += internals["toilet_total_round_trip"]
-            total_material_trips += internals["material_trips_today"]
-            total_material_rt += internals["material_total_round_trip"]
+            internals = source.worker_internals_for(w.id)
+            if internals is None:
+                continue
+            # Duck-typed: WorkerInternals dataclass attribute access (post
+            # step 3). Fallback to dict access for any test FakeSource still
+            # emitting raw dicts.
+            if hasattr(internals, "time_working"):
+                total_time_working += internals.time_working
+                total_time_walking += internals.time_walking
+                total_time_facilities += internals.time_at_facilities
+                total_toilet_trips += internals.toilet_trips_today
+                total_toilet_rt += internals.toilet_total_round_trip
+                total_material_trips += internals.material_trips_today
+                total_material_rt += internals.material_total_round_trip
+            else:
+                total_time_working += internals["time_working"]
+                total_time_walking += internals["time_walking"]
+                total_time_facilities += internals["time_at_facilities"]
+                total_toilet_trips += internals["toilet_trips_today"]
+                total_toilet_rt += internals["toilet_total_round_trip"]
+                total_material_trips += internals["material_trips_today"]
+                total_material_rt += internals["material_total_round_trip"]
 
         n = len(workers)
         avg_toilet_rt_sec = (total_toilet_rt / total_toilet_trips) if total_toilet_trips > 0 else 0

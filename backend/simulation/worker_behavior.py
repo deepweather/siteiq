@@ -1,11 +1,35 @@
 from math import sqrt
+from typing import Callable, Protocol
 import random
 
 from models.assets import Asset, Position, WorkerState
+from models.site import Site, Zone
+from simulation.worker_internals import WorkerInternals
 from config import (
     WORKER_SPEED, TOILET_INTERVAL, BREAK_INTERVAL, MATERIAL_RUN_INTERVAL,
     TOILET_DWELL, BREAK_DWELL, MATERIAL_DWELL, JITTER_FACTOR,
 )
+
+
+class _WorkerEngine(Protocol):
+    """Minimal engine surface that worker_behavior depends on. Lets mypy
+    type-check this module without importing the full SimulationEngine
+    (which would cascade type errors from not-yet-refactored modules)."""
+    sim_time: float
+    assets: list[Asset]
+    site: Site
+    worker_internals: dict[str, WorkerInternals]
+
+    def log_activity(self, asset_id: str, event: str) -> None: ...
+
+    # Optional indexed accessors (step 6). Engines that don't implement
+    # them fall back to the slow linear scan over `assets`.
+    def facilities_by_subtype(self, subtype: str) -> list[Asset]: ...
+    def materials(self) -> list[Asset]: ...
+
+
+# State handler signature: (worker, internals, dt, engine) -> None
+StateHandler = Callable[[Asset, WorkerInternals, float, _WorkerEngine], None]
 
 
 def _jitter(base: float) -> float:
@@ -32,35 +56,36 @@ def move_toward(worker: Asset, target: Position, dt_sim: float) -> tuple[bool, f
     return False, move_dist
 
 
-def _find_nearest(worker: Asset, assets: list[Asset], subtype: str) -> Asset | None:
+def _find_nearest_facility(worker: Asset, engine: _WorkerEngine, subtype: str) -> Asset | None:
+    candidates = engine.facilities_by_subtype(subtype)
     best = None
     best_dist = float("inf")
-    for a in assets:
-        if a.type == "facility" and a.subtype == subtype:
-            dx = a.position.x - worker.position.x
-            dy = a.position.y - worker.position.y
-            d = sqrt(dx * dx + dy * dy)
-            if d < best_dist:
-                best_dist = d
-                best = a
+    for a in candidates:
+        dx = a.position.x - worker.position.x
+        dy = a.position.y - worker.position.y
+        d = sqrt(dx * dx + dy * dy)
+        if d < best_dist:
+            best_dist = d
+            best = a
     return best
 
 
-def _find_material_for_zone(worker: Asset, assets: list[Asset]) -> Asset | None:
+def _find_material(worker: Asset, engine: _WorkerEngine) -> Asset | None:
     best = None
     best_dist = float("inf")
-    for a in assets:
-        if a.type == "material":
-            dx = a.position.x - worker.position.x
-            dy = a.position.y - worker.position.y
-            d = sqrt(dx * dx + dy * dy)
-            if d < best_dist:
-                best_dist = d
-                best = a
+    for a in engine.materials():
+        dx = a.position.x - worker.position.x
+        dy = a.position.y - worker.position.y
+        d = sqrt(dx * dx + dy * dy)
+        if d < best_dist:
+            best_dist = d
+            best = a
     return best
 
 
-def _random_point_in_zone(zone_id: str, zones) -> Position:
+def _random_point_in_zone(zone_id: str | None, zones: list[Zone]) -> Position:
+    if zone_id is None:
+        return Position(x=120, y=80)
     for z in zones:
         if z.id == zone_id:
             return Position(
@@ -70,127 +95,162 @@ def _random_point_in_zone(zone_id: str, zones) -> Position:
     return Position(x=120, y=80)
 
 
-def update_worker(worker: Asset, dt_sim: float, engine) -> None:
+# ─── Per-state handlers ──────────────────────────────────────────────────
+
+
+def _on_working(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
+    internals.time_working += dt_sim
+    internals.next_toilet -= dt_sim
+    internals.next_break -= dt_sim
+    internals.next_material -= dt_sim
+
+    if internals.next_toilet <= 0:
+        toilet = _find_nearest_facility(worker, engine, "toilet")
+        if toilet:
+            internals.target = Position(x=toilet.position.x, y=toilet.position.y)
+            internals.return_position = Position(x=worker.position.x, y=worker.position.y)
+            worker.state = WorkerState.WALKING_TO_TOILET
+            internals.next_toilet = _jitter(TOILET_INTERVAL)
+            internals.toilet_trips_today += 1
+            internals.toilet_trip_start_time = engine.sim_time
+            engine.log_activity(worker.id, f"Walking to {toilet.id}")
+            return
+        # No toilet exists — defer the check so we don't get pinned here
+        internals.next_toilet = _jitter(TOILET_INTERVAL)
+
+    if internals.next_material <= 0:
+        mat = _find_material(worker, engine)
+        if mat:
+            internals.target = Position(x=mat.position.x, y=mat.position.y)
+            internals.return_position = Position(x=worker.position.x, y=worker.position.y)
+            worker.state = WorkerState.WALKING_TO_MATERIAL
+            internals.next_material = _jitter(MATERIAL_RUN_INTERVAL)
+            internals.material_trips_today += 1
+            internals.material_trip_start_time = engine.sim_time
+            engine.log_activity(worker.id, f"Fetching {mat.subtype}")
+            return
+        internals.next_material = _jitter(MATERIAL_RUN_INTERVAL)
+
+    if internals.next_break <= 0:
+        breakroom = _find_nearest_facility(worker, engine, "breakroom")
+        if breakroom:
+            internals.target = Position(x=breakroom.position.x, y=breakroom.position.y)
+            internals.return_position = Position(x=worker.position.x, y=worker.position.y)
+            worker.state = WorkerState.WALKING_TO_BREAK
+            internals.next_break = _jitter(BREAK_INTERVAL)
+            engine.log_activity(worker.id, "Walking to break room")
+            return
+        internals.next_break = _jitter(BREAK_INTERVAL)
+
+
+def _on_walking_to_toilet(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
+    internals.time_walking += dt_sim
+    assert internals.target is not None
+    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    internals.total_distance += dist
+    if arrived:
+        worker.state = WorkerState.AT_TOILET
+        internals.action_timer = _jitter(TOILET_DWELL)
+        engine.log_activity(worker.id, "Arrived at toilet")
+
+
+def _on_at_toilet(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
+    internals.time_at_facilities += dt_sim
+    internals.action_timer -= dt_sim
+    if internals.action_timer <= 0:
+        worker.state = WorkerState.WALKING_TO_WORK
+        internals.target = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
+        internals.returning_from = "toilet"
+        engine.log_activity(worker.id, "Leaving toilet, returning to work")
+
+
+def _on_walking_to_material(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
+    internals.time_walking += dt_sim
+    assert internals.target is not None
+    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    internals.total_distance += dist
+    if arrived:
+        worker.state = WorkerState.CARRYING_MATERIAL
+        internals.action_timer = _jitter(MATERIAL_DWELL)
+        internals.carrying_target = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
+        engine.log_activity(worker.id, "Picking up material")
+
+
+def _on_carrying_material(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
+    if internals.action_timer > 0:
+        internals.time_at_facilities += dt_sim
+        internals.action_timer -= dt_sim
+        return
+    internals.time_walking += dt_sim
+    target = internals.carrying_target
+    if target is None:
+        target = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
+        internals.carrying_target = target
+    arrived, dist = move_toward(worker, target, dt_sim)
+    internals.total_distance += dist
+    if arrived:
+        trip_time = engine.sim_time - internals.material_trip_start_time
+        if 0 < trip_time < 7200:
+            internals.material_total_round_trip += trip_time
+        worker.state = WorkerState.WORKING
+        engine.log_activity(worker.id, "Material delivered, resumed work")
+
+
+def _on_walking_to_break(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
+    internals.time_walking += dt_sim
+    assert internals.target is not None
+    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    internals.total_distance += dist
+    if arrived:
+        worker.state = WorkerState.AT_BREAK
+        internals.action_timer = _jitter(BREAK_DWELL)
+        engine.log_activity(worker.id, "On break")
+
+
+def _on_at_break(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
+    internals.time_at_facilities += dt_sim
+    internals.action_timer -= dt_sim
+    if internals.action_timer <= 0:
+        worker.state = WorkerState.WALKING_TO_WORK
+        internals.target = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
+        internals.returning_from = "break"
+        engine.log_activity(worker.id, "Break over, returning to work")
+
+
+def _on_walking_to_work(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
+    internals.time_walking += dt_sim
+    assert internals.target is not None
+    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    internals.total_distance += dist
+    if arrived:
+        if internals.returning_from == "toilet":
+            trip_time = engine.sim_time - internals.toilet_trip_start_time
+            if 0 < trip_time < 7200:
+                internals.toilet_total_round_trip += trip_time
+        internals.returning_from = ""
+        internals.toilet_trip_start_time = 0.0
+        worker.state = WorkerState.WORKING
+        engine.log_activity(worker.id, "Resumed work")
+
+
+# Dispatch table — adding a new WorkerState means: write a handler + add one line.
+STATE_HANDLERS: dict[str, StateHandler] = {
+    WorkerState.WORKING: _on_working,
+    WorkerState.WALKING_TO_TOILET: _on_walking_to_toilet,
+    WorkerState.AT_TOILET: _on_at_toilet,
+    WorkerState.WALKING_TO_MATERIAL: _on_walking_to_material,
+    WorkerState.CARRYING_MATERIAL: _on_carrying_material,
+    WorkerState.WALKING_TO_BREAK: _on_walking_to_break,
+    WorkerState.AT_BREAK: _on_at_break,
+    WorkerState.WALKING_TO_WORK: _on_walking_to_work,
+}
+
+
+def update_worker(worker: Asset, dt_sim: float, engine: _WorkerEngine) -> None:
+    """Advance a worker by `dt_sim` simulated seconds. Dispatches to the
+    handler registered for the worker's current state. Unknown states are
+    a no-op (defensive — should never happen in practice)."""
     internals = engine.worker_internals[worker.id]
-    assets = engine.assets
-    zones = engine.site.zones
-
-    if worker.state == WorkerState.WORKING:
-        internals["time_working"] += dt_sim
-        internals["next_toilet"] -= dt_sim
-        internals["next_break"] -= dt_sim
-        internals["next_material"] -= dt_sim
-
-        if internals["next_toilet"] <= 0:
-            toilet = _find_nearest(worker, assets, "toilet")
-            if toilet:
-                internals["target"] = Position(x=toilet.position.x, y=toilet.position.y)
-                internals["return_position"] = Position(x=worker.position.x, y=worker.position.y)
-                worker.state = WorkerState.WALKING_TO_TOILET
-                internals["next_toilet"] = _jitter(TOILET_INTERVAL)
-                internals["toilet_trips_today"] += 1
-                internals["toilet_trip_start_time"] = engine.sim_time
-                engine.log_activity(worker.id, f"Walking to {toilet.id}")
-            return
-
-        if internals["next_material"] <= 0:
-            mat = _find_material_for_zone(worker, assets)
-            if mat:
-                internals["target"] = Position(x=mat.position.x, y=mat.position.y)
-                internals["return_position"] = Position(x=worker.position.x, y=worker.position.y)
-                worker.state = WorkerState.WALKING_TO_MATERIAL
-                internals["next_material"] = _jitter(MATERIAL_RUN_INTERVAL)
-                internals["material_trips_today"] += 1
-                internals["material_trip_start_time"] = engine.sim_time
-                engine.log_activity(worker.id, f"Fetching {mat.subtype}")
-            return
-
-        if internals["next_break"] <= 0:
-            breakroom = _find_nearest(worker, assets, "breakroom")
-            if breakroom:
-                internals["target"] = Position(x=breakroom.position.x, y=breakroom.position.y)
-                internals["return_position"] = Position(x=worker.position.x, y=worker.position.y)
-                worker.state = WorkerState.WALKING_TO_BREAK
-                internals["next_break"] = _jitter(BREAK_INTERVAL)
-                engine.log_activity(worker.id, "Walking to break room")
-            return
-
-    elif worker.state == WorkerState.WALKING_TO_TOILET:
-        internals["time_walking"] += dt_sim
-        arrived, dist = move_toward(worker, internals["target"], dt_sim)
-        internals["total_distance"] += dist
-        if arrived:
-            worker.state = WorkerState.AT_TOILET
-            internals["action_timer"] = _jitter(TOILET_DWELL)
-            engine.log_activity(worker.id, "Arrived at toilet")
-
-    elif worker.state == WorkerState.AT_TOILET:
-        internals["time_at_facilities"] += dt_sim
-        internals["action_timer"] -= dt_sim
-        if internals["action_timer"] <= 0:
-            worker.state = WorkerState.WALKING_TO_WORK
-            internals["target"] = _random_point_in_zone(worker.assigned_zone, zones)
-            internals["returning_from"] = "toilet"
-            engine.log_activity(worker.id, "Leaving toilet, returning to work")
-
-    elif worker.state == WorkerState.WALKING_TO_MATERIAL:
-        internals["time_walking"] += dt_sim
-        arrived, dist = move_toward(worker, internals["target"], dt_sim)
-        internals["total_distance"] += dist
-        if arrived:
-            worker.state = WorkerState.CARRYING_MATERIAL
-            internals["action_timer"] = _jitter(MATERIAL_DWELL)
-            internals["carrying_target"] = _random_point_in_zone(worker.assigned_zone, zones)
-            engine.log_activity(worker.id, "Picking up material")
-
-    elif worker.state == WorkerState.CARRYING_MATERIAL:
-        if internals["action_timer"] > 0:
-            internals["time_at_facilities"] += dt_sim
-            internals["action_timer"] -= dt_sim
-        else:
-            internals["time_walking"] += dt_sim
-            target = internals.get("carrying_target")
-            if target is None:
-                target = _random_point_in_zone(worker.assigned_zone, zones)
-                internals["carrying_target"] = target
-            arrived, dist = move_toward(worker, target, dt_sim)
-            internals["total_distance"] += dist
-            if arrived:
-                trip_time = engine.sim_time - internals["material_trip_start_time"]
-                if 0 < trip_time < 7200:
-                    internals["material_total_round_trip"] += trip_time
-                worker.state = WorkerState.WORKING
-                engine.log_activity(worker.id, "Material delivered, resumed work")
-
-    elif worker.state == WorkerState.WALKING_TO_BREAK:
-        internals["time_walking"] += dt_sim
-        arrived, dist = move_toward(worker, internals["target"], dt_sim)
-        internals["total_distance"] += dist
-        if arrived:
-            worker.state = WorkerState.AT_BREAK
-            internals["action_timer"] = _jitter(BREAK_DWELL)
-            engine.log_activity(worker.id, "On break")
-
-    elif worker.state == WorkerState.AT_BREAK:
-        internals["time_at_facilities"] += dt_sim
-        internals["action_timer"] -= dt_sim
-        if internals["action_timer"] <= 0:
-            worker.state = WorkerState.WALKING_TO_WORK
-            internals["target"] = _random_point_in_zone(worker.assigned_zone, zones)
-            internals["returning_from"] = "break"
-            engine.log_activity(worker.id, "Break over, returning to work")
-
-    elif worker.state == WorkerState.WALKING_TO_WORK:
-        internals["time_walking"] += dt_sim
-        arrived, dist = move_toward(worker, internals["target"], dt_sim)
-        internals["total_distance"] += dist
-        if arrived:
-            returning_from = internals.get("returning_from", "")
-            if returning_from == "toilet":
-                trip_time = engine.sim_time - internals.get("toilet_trip_start_time", 0)
-                if 0 < trip_time < 7200:
-                    internals["toilet_total_round_trip"] += trip_time
-            internals["returning_from"] = ""
-            internals["toilet_trip_start_time"] = 0
-            worker.state = WorkerState.WORKING
-            engine.log_activity(worker.id, "Resumed work")
+    handler = STATE_HANDLERS.get(worker.state)
+    if handler is not None:
+        handler(worker, internals, dt_sim, engine)

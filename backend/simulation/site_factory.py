@@ -1,6 +1,7 @@
 import random
 from models.site import Site, Zone, Phase, ScheduleEntry
 from models.assets import Asset, Position, WorkerState, EquipmentState
+from simulation.worker_internals import WorkerInternals
 from config import (
     TOILET_INTERVAL, BREAK_INTERVAL,
     MATERIAL_RUN_INTERVAL, JITTER_FACTOR,
@@ -199,7 +200,9 @@ def get_project_list() -> list[dict]:
     ]
 
 
-def create_site_from_template(project_id: str) -> tuple[Site, list[Asset], dict]:
+def create_site_from_template(
+    project_id: str,
+) -> tuple[Site, list[Asset], dict[str, WorkerInternals]]:
     tmpl = PROJECT_TEMPLATES.get(project_id)
     if not tmpl:
         raise ValueError(f"Unknown project: {project_id}")
@@ -222,7 +225,7 @@ def create_site_from_template(project_id: str) -> tuple[Site, list[Asset], dict]
     )
 
     assets: list[Asset] = []
-    worker_internals: dict = {}
+    worker_internals: dict[str, WorkerInternals] = {}
 
     worker_num = 1
     for zdef in tmpl["zones"]:
@@ -237,24 +240,12 @@ def create_site_from_template(project_id: str) -> tuple[Site, list[Asset], dict]
                     state=WorkerState.WORKING,
                     assigned_zone=zdef["id"],
                 ))
-                worker_internals[wid] = {
-                    "next_toilet": _jitter(TOILET_INTERVAL * random.uniform(0.3, 1.0)),
-                    "next_break": _jitter(BREAK_INTERVAL * random.uniform(0.5, 1.0)),
-                    "next_material": _jitter(MATERIAL_RUN_INTERVAL * random.uniform(0.4, 1.0)),
-                    "action_timer": 0.0,
-                    "target": None,
-                    "return_position": Position(x=px, y=py),
-                    "total_distance": 0.0,
-                    "time_working": 0.0,
-                    "time_walking": 0.0,
-                    "time_at_facilities": 0.0,
-                    "toilet_trips_today": 0,
-                    "toilet_trip_start_time": 0.0,
-                    "toilet_total_round_trip": 0.0,
-                    "material_trips_today": 0,
-                    "material_trip_start_time": 0.0,
-                    "material_total_round_trip": 0.0,
-                }
+                worker_internals[wid] = WorkerInternals(
+                    next_toilet=_jitter(TOILET_INTERVAL * random.uniform(0.3, 1.0)),
+                    next_break=_jitter(BREAK_INTERVAL * random.uniform(0.5, 1.0)),
+                    next_material=_jitter(MATERIAL_RUN_INTERVAL * random.uniform(0.4, 1.0)),
+                    return_position=Position(x=px, y=py),
+                )
                 worker_num += 1
 
     for fdef in tmpl["facilities"]:

@@ -9,18 +9,28 @@ export const WS_BASE = (import.meta.env.VITE_WS_BASE as string | undefined) ?? '
 
 /**
  * Typed error from the API. The backend always returns
- * `{ error: { code, message, field? } }` for non-2xx responses.
- * Forms render `field` errors inline; everything else is a toast.
+ * `{ error: { code, message, field?, request_id? } }` for non-2xx
+ * responses. Forms render `field` errors inline; everything else is a
+ * toast. `requestId` lets the user paste a stable identifier when
+ * filing a support ticket.
  */
 export class ApiError extends Error {
   status: number;
   code: string;
   field?: string;
-  constructor(status: number, code: string, message: string, field?: string) {
+  requestId?: string;
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    field?: string,
+    requestId?: string,
+  ) {
     super(message);
     this.status = status;
     this.code = code;
     this.field = field;
+    this.requestId = requestId;
   }
 }
 
@@ -41,14 +51,19 @@ export function clearCsrfCache(): void {
 }
 
 async function parseError(res: Response): Promise<ApiError> {
-  let payload: { error?: { code?: string; message?: string; field?: string } } = {};
+  let payload: { error?: { code?: string; message?: string; field?: string; request_id?: string } } = {};
   try { payload = await res.json(); } catch { /* body may not be JSON */ }
   const e = payload?.error ?? {};
+  // The X-Request-Id response header is always present (set by the
+  // request-id middleware) — fall back to it if the server bypassed
+  // the standard envelope (e.g. middleware-level rejections).
+  const headerRid = res.headers.get('x-request-id') ?? undefined;
   return new ApiError(
     res.status,
     e.code ?? 'http_error',
     e.message ?? `${res.status} ${res.statusText}`,
     e.field,
+    e.request_id ?? headerRid,
   );
 }
 
@@ -208,6 +223,16 @@ export const orgs = {
 // ---------------------------------------------------------------------------
 // Existing simulation API
 // ---------------------------------------------------------------------------
+
+export interface VersionInfo {
+  commit: string;
+  built_at: string;
+  short: string;
+}
+
+export function fetchVersion(): Promise<VersionInfo> {
+  return getJson<VersionInfo>('/api/version');
+}
 
 export interface ProjectSummary {
   id: string;

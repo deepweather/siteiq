@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     email_outbox_retention_days: int = 90
     email_outbox_cleanup_interval_seconds: int = 3600  # 1 hour
 
+    # Auth garbage collection. Revoked/expired auth_sessions and
+    # consumed/expired verification_tokens are dropped after the
+    # respective retention windows. 0 = disabled.
+    auth_session_retention_days: int = 30
+    auth_token_retention_days: int = 7
+    auth_cleanup_interval_seconds: int = 3600
+
     # Portfolio estimator. Computes per-template waste at startup by
     # warming a transient SimulationEngine for each project. Tests turn
     # this off so the lifespan stays fast.

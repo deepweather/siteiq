@@ -13,3 +13,5 @@ __pycache__/
 vision/videos/*.mp4
 yolov8n.pt
 .ruff_cache/
+version.txt
+

@@ -166,13 +166,17 @@ def get_source(
     request: Request,
     org: Org = Depends(get_current_org),
 ) -> SiteStateSource:
-    return _get_registry(request).for_org(org.id)
+    """Return the org's engine. On first access, seeds the engine with
+    `org.active_project_id` if set — this is how the persisted project
+    survives backend restarts."""
+    return _get_registry(request).for_org(org.id, project_id=org.active_project_id)
 
 
 def get_rec_service(
     request: Request,
     org: Org = Depends(get_current_org),
 ) -> RecommendationService:
+    _get_registry(request).for_org(org.id, project_id=org.active_project_id)
     return _get_registry(request).rec_service_for(org.id)
 
 

@@ -28,6 +28,9 @@ EngineFactory = Callable[[str], SimulationEngine]
 
 
 def _default_factory(default_project_id: str) -> EngineFactory:
+    """Initial-engine factory used when the registry has no other
+    knowledge about the org. The route layer's `get_source` overrides
+    this with a per-org factory that reads `Org.active_project_id`."""
     def make(_org_id: str) -> SimulationEngine:
         return SimulationEngine(project_id=default_project_id)
 
@@ -51,13 +54,22 @@ class SourceRegistry:
 
     # ---- engines ----------------------------------------------------
 
-    def for_org(self, org_id: str) -> SimulationEngine:
+    def for_org(self, org_id: str, *, project_id: str | None = None) -> SimulationEngine:
+        """Return (or lazily create) the org's engine. Pass `project_id`
+        on first creation to seed it from a persisted org choice; later
+        calls ignore it."""
         eng = self._engines.get(org_id)
         if eng is None:
-            eng = self._factory(org_id)
+            if project_id:
+                eng = SimulationEngine(project_id=project_id)
+            else:
+                eng = self._factory(org_id)
             self._engines[org_id] = eng
             self._rec_services[org_id] = RecommendationService(eng)
-            logger.info("source_engine_created", extra={"org_id": org_id, "project": eng.project_id})
+            logger.info(
+                "source_engine_created",
+                extra={"org_id": org_id, "project": eng.project_id},
+            )
         return eng
 
     def set(self, org_id: str, source: SimulationEngine) -> None:

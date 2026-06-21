@@ -28,9 +28,11 @@ from analytics.aggregator import compute_waste_summary
 from api.camera import router as camera_router
 from api.dev import router as dev_router
 from api.health import router as health_router
+from api.request_id import RequestIdMiddleware
 from api.routes import router as api_router
 from api.security_headers import SecurityHeadersMiddleware
 from api.websocket import router as ws_router
+from auth.auth_cleanup import run_cleanup_loop as run_auth_cleanup
 from auth.csrf import CSRFMiddleware
 from auth.email_sender import build_sender_from_settings
 from auth.outbox_cleanup import run_cleanup_loop as run_outbox_cleanup
@@ -125,18 +127,27 @@ async def lifespan(app: FastAPI):
             interval_seconds=settings.email_outbox_cleanup_interval_seconds,
         )
     )
+    auth_cleanup_task = asyncio.create_task(
+        run_auth_cleanup(
+            session_factory,
+            session_retention_days=settings.auth_session_retention_days,
+            token_retention_days=settings.auth_token_retention_days,
+            interval_seconds=settings.auth_cleanup_interval_seconds,
+        )
+    )
 
     try:
         yield
     finally:
         for eng in registry.all_engines():
             eng.running = False
-        for task in (sim_task, analytics_task, outbox_task):
+        bg_tasks = (sim_task, analytics_task, outbox_task, auth_cleanup_task)
+        for task in bg_tasks:
             task.cancel()
         # Drain the cancellations — without this, `engine.dispose()` can
-        # race with an in-flight outbox cleanup and the lifespan never
+        # race with an in-flight cleanup and the lifespan never
         # returns control to the TestClient.
-        for task in (sim_task, analytics_task, outbox_task):
+        for task in bg_tasks:
             try:
                 await task
             except (asyncio.CancelledError, Exception):
@@ -177,17 +188,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         is_prod=cfg.is_prod,
         frontend_origin=cfg.frontend_origin,
     )
+    # Even further out: request-id binding. Every log emitted while
+    # serving a request will carry the same id, and the response echoes
+    # it on `X-Request-Id` so support tickets are searchable.
+    app.add_middleware(RequestIdMiddleware)
 
-    # Standard error envelope. The frontend expects {error: {code, message, field?}}.
+    # Standard error envelope. The frontend expects {error: {code, message, field?, request_id?}}.
     @app.exception_handler(StarletteHTTPException)
     async def _http_exc(request: Request, exc: StarletteHTTPException):
-        # ApiError already supplies the envelope as the detail dict.
+        from api.request_id import get_current_request_id
+        rid = get_current_request_id()
         if isinstance(exc.detail, dict) and "error" in exc.detail:
-            return JSONResponse(status_code=exc.status_code, content=exc.detail)
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"error": {"code": "http_error", "message": str(exc.detail)}},
-        )
+            payload = dict(exc.detail)
+            if rid:
+                payload["error"] = {**payload["error"], "request_id": rid}
+            return JSONResponse(status_code=exc.status_code, content=payload)
+        err = {"code": "http_error", "message": str(exc.detail)}
+        if rid:
+            err["request_id"] = rid
+        return JSONResponse(status_code=exc.status_code, content={"error": err})
 
     @app.exception_handler(RateLimitExceeded)
     async def _rate_limit_exc(request: Request, exc: RateLimitExceeded):

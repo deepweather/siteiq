@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_org, get_rec_service, get_source
 from db.models import Org
+from db.session import get_db
 from models.assets import Position, EquipmentState
 from services.recommendation_service import RecommendationService
 from simulation.engine import SimulationEngine
@@ -91,7 +93,8 @@ async def load_project(
     project_id: str,
     source: SiteStateSource = Depends(get_source),
     rec_service: RecommendationService = Depends(get_rec_service),
-    _: Org = Depends(get_current_org),
+    org: Org = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
 ):
     if project_id not in PROJECT_TEMPLATES:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -101,6 +104,10 @@ async def load_project(
     if isinstance(source, SimulationEngine):
         source.load_project(project_id)
     rec_service.clear()
+    # Persist so the choice survives a backend restart (the registry
+    # rebuilds engines from `org.active_project_id` on first access).
+    org.active_project_id = project_id
+    await db.flush()
     return {"status": "loaded", "project_id": project_id}
 
 

@@ -172,13 +172,44 @@ cancelled task before disposing the DB engine — without that drain,
 an in-flight cleanup can race the engine shutdown and the lifespan
 never returns.
 
-### Health endpoints
+### Health, readiness, and version
 - `GET /healthz` — liveness, returns 200 + `{"status": "ok"}` while the
   process is up. Used by the Dockerfile + docker-compose healthchecks.
 - `GET /readyz` — readiness, returns 200 only when the DB is reachable
   AND the simulation registry is initialised. 503 otherwise so traffic
-  is held off briefly during startup. Both are unauthenticated and
-  GET-only (so they sail past CSRF).
+  is held off briefly during startup.
+- `GET /api/version` — returns `{commit, built_at, short}`. Reads
+  `SITEIQ_COMMIT_SHA` + `SITEIQ_BUILT_AT` env first; falls back to a
+  `version.txt` file the Dockerfile stamps at build time. Surfaced in
+  the SettingsLayout footer for support tickets.
+
+All three are unauthenticated and GET-only (so they sail past CSRF).
+
+### Request-id middleware
+`api/request_id.py` — pure ASGI middleware, outermost layer. Reads
+incoming `X-Request-Id` (e.g. from a load balancer) or generates a UUID
+hex, binds it to a `contextvars.ContextVar`, echoes it on the response
+header. `logging_config.RequestIdFilter` reads from the ContextVar and
+stamps every log record with `request_id=…`. The standard error
+envelope includes `request_id` so the frontend's `ApiError.requestId`
+is set for every server-rejected request — users can paste it into
+support tickets.
+
+### Auth GC
+`auth/auth_cleanup.py` — periodic background task that drops fully
+revoked / expired `auth_sessions` and consumed / expired
+`verification_tokens` after the configured retention windows
+(`SITEIQ_AUTH_SESSION_RETENTION_DAYS`, `SITEIQ_AUTH_TOKEN_RETENTION_DAYS`).
+Mirrors `outbox_cleanup.py`; the lifespan teardown drains both before
+disposing the DB engine.
+
+### Active project per org
+`orgs.active_project_id` (added in migration `0002_orgs_active_project`)
+persists each org's chosen `PROJECT_TEMPLATES` key. The
+`SourceRegistry`'s `for_org` accepts an optional `project_id` argument;
+`get_source` passes `org.active_project_id` so a backend restart
+rebuilds engines on the right project. `POST /api/projects/{id}/load`
+writes the choice back to the row.
 
 ### Magic-link login
 Passwordless alternative auth path. `POST /auth/request-magic-link`
@@ -425,12 +456,15 @@ Thin composition root. `create_app(settings=None)` builds an isolated FastAPI ap
 | Outbox cleanup | `tests/test_outbox_cleanup.py` | 2 | Old rows deleted, retention=0 disables |
 | Account + org deletion | `tests/test_deletion.py` | 6 | Password gate, last-owner cascade, name-mismatch confirm |
 | Per-org simulation | `tests/test_per_org_engine.py` | 2 | Two orgs see independent sites; deletion discards engine |
-| Health endpoints | `tests/test_health.py` | 3 | /healthz cheap; /readyz green/red on DB |
+| Health + version | `tests/test_health.py` | 5 | /healthz; /readyz green/red on DB; /api/version shape + env override |
 | Magic-link login | `tests/test_magic_link.py` | 4 | Silent-on-unknown, single-use, replay rejected, round-trip |
 | Audit CSV export | `tests/test_audit_export.py` | 3 | Owner can download, admin gated, bad timestamp 400 |
-| **Total backend** | | **182** | |
+| Auth GC | `tests/test_auth_cleanup.py` | 3 | Old revoked sessions + consumed tokens dropped; live ones kept |
+| Active project persistence | `tests/test_active_project_persistence.py` | 1 | orgs.active_project_id survives a registry reset |
+| Request-Id middleware | `tests/test_request_id.py` | 4 | Echoed, generated when absent, distinct per request, in error envelope |
+| **Total backend** | | **192** | |
 | Frontend | `frontend/src/**/*.test.{ts,tsx}` | 52 | Sim canvas + auth (AuthProvider, RequireAuth), api.ts |
-| **Total** | | **234** | |
+| **Total** | | **244** | |
 
 Mypy strict scoped to `simulation/worker_internals.py`, `simulation/worker_behavior.py`, `state/source.py` — clean.
 
@@ -599,7 +633,6 @@ debt items 33–38 remain open.
 34. **Per-org custom projects.** Each org now has its own `SimulationEngine` (see registry above) but the engines still pick from the 3 shared `PROJECT_TEMPLATES`. A future `org_projects` table would let users persist custom projects.
 35. **No 2FA UI yet.** The `users.totp_secret` column exists; the UI is intentionally hidden behind a future feature flag.
 36. **No billing.** `orgs.plan` exists (`trial|pro|enterprise`) but Stripe integration is a separate plan.
-37. **Bundle size warning** — the 1.2 MB lazy chunk is the zxcvbn-ts dictionary, only fetched when a user focuses a password field. Already code-split. Could be made smaller by limiting languages.
 
 ### Resolved in 2026-06-21
 
@@ -621,6 +654,11 @@ debt items 33–38 remain open.
 - ~~**WS drops were silently shown as a colored pill**~~ — `useConnectionToast` shows "Reconnecting…" / "Live again" after a grace window.
 - ~~**Password-only login**~~ — magic-link via `/auth/request-magic-link` + `/auth/login-with-token`, 15-min single-use tokens.
 - ~~**No audit log export**~~ — `GET /api/orgs/current/audit.csv` with `since` / `until` query params (RFC 4180, owner-only).
+- ~~**Auth tables grew forever**~~ — `auth/auth_cleanup.py` periodic task drops fully-revoked sessions + consumed tokens past their retention window.
+- ~~**Backend restart reset every org's project to default**~~ — `orgs.active_project_id` (migration 0002) persists each org's choice.
+- ~~**No request tracing**~~ — request-id middleware + structured logging filter; envelope carries `request_id` for support.
+- ~~**Password meter chunk was 1.2 MB**~~ — direct-import only `commonWords + firstnames + wordSequences + adjacencyGraphs`. Net ~750 KB saved on the password-field lazy load.
+- ~~**No version endpoint**~~ — `/api/version` returns commit + build time; surfaced in the SettingsLayout footer.
 
 ### API route → frontend mapping (verified)
 

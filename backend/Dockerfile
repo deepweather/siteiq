@@ -48,6 +48,13 @@ ENV PATH="/app/.venv/bin:$PATH" \
 WORKDIR /app
 COPY --from=builder /app /app
 
+# Stamp commit + build time into a file the /api/version endpoint
+# reads. Env vars take precedence at runtime if you'd rather inject
+# them via the orchestrator.
+ARG SITEIQ_COMMIT_SHA=dev
+ARG SITEIQ_BUILT_AT
+RUN printf "%s\n%s\n" "$SITEIQ_COMMIT_SHA" "${SITEIQ_BUILT_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" > /app/version.txt
+
 # Non-root by default.
 RUN useradd --no-create-home --uid 10001 siteiq && chown -R siteiq:siteiq /app
 USER siteiq

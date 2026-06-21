@@ -94,6 +94,10 @@ class Org(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(80), unique=True, index=True, nullable=False)
     plan: Mapped[str] = mapped_column(String(32), nullable=False, default=Plan.TRIAL.value)
+    # The PROJECT_TEMPLATES key the org's simulation engine should boot
+    # with. Persists across backend restarts (the registry was per-app
+    # before, so a restart reset every org to the default project).
+    active_project_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )

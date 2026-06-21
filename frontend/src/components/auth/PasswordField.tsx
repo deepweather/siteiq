@@ -130,22 +130,39 @@ function useStrengthScore(value: string | null): number | null {
     }
     let cancelled = false;
     (async () => {
-      const [coreMod, common, en] = await Promise.all([
+      // The default `dictionary` exports of `language-common` and
+      // `language-en` together pull in ~1.2 MB of wordlists. We
+      // bypass them and load only the slices that catch the highest
+      // share of weak choices for our user base:
+      //   - commonWords    (the actual top-N English words)
+      //   - firstnames     (16 KB; cheap, useful)
+      //   - wordSequences  (2 KB; covers "abcdef"-style runs)
+      //   - adjacencyGraphs from common (keyboard layout heuristics)
+      // Skipped: lastnames (473 KB), wikipedia (273 KB), the
+      // multilingual diceware + breached corpora (~1 MB combined).
+      // Net chunk size drops from ~1.2 MB to ~250 KB. HIBP breach
+      // check is the real second line of defense.
+      const [coreMod, graphsJson, commonWords, firstnames, wordSequences, translationsMod] = await Promise.all([
         import('@zxcvbn-ts/core'),
-        import('@zxcvbn-ts/language-common'),
-        import('@zxcvbn-ts/language-en'),
+        import('@zxcvbn-ts/language-common/dist/adjacencyGraphs.json.mjs'),
+        import('@zxcvbn-ts/language-en/dist/commonWords.json.mjs'),
+        import('@zxcvbn-ts/language-en/dist/firstnames.json.mjs'),
+        import('@zxcvbn-ts/language-en/dist/wordSequences.json.mjs'),
+        import('@zxcvbn-ts/language-en/dist/translations.mjs'),
       ]);
       const { zxcvbn, zxcvbnOptions } = coreMod as unknown as {
         zxcvbn: (pw: string) => { score: number };
         zxcvbnOptions: { setOptions: (o: unknown) => void };
       };
+      const unwrap = (m: { default?: unknown }) => (m && 'default' in m ? m.default : m);
       zxcvbnOptions.setOptions({
         dictionary: {
-          ...common.dictionary,
-          ...en.dictionary,
+          'commonWords-en': unwrap(commonWords) as string[],
+          'firstnames-en': unwrap(firstnames) as string[],
+          'wordSequences-en': unwrap(wordSequences) as string[],
         },
-        translations: en.translations,
-        graphs: common.adjacencyGraphs,
+        translations: unwrap(translationsMod),
+        graphs: unwrap(graphsJson) as Record<string, unknown>,
       });
       const result = zxcvbn(value);
       if (!cancelled) setScore(result.score);

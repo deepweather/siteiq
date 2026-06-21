@@ -1,7 +1,8 @@
 /** Shared shell for /app/settings/* pages — left nav + content area. */
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth/AuthProvider';
-import { auth, clearCsrfCache } from '../../services/api';
+import { auth, clearCsrfCache, fetchVersion, type VersionInfo } from '../../services/api';
 
 const NAV = [
   { to: '/app/settings/account', label: 'Account' },
@@ -14,6 +15,10 @@ export default function SettingsLayout() {
   const { user, org, refresh } = useAuth();
   const nav = useNavigate();
   const isAdmin = org?.role === 'owner' || org?.role === 'admin';
+  const [version, setVersion] = useState<VersionInfo | null>(null);
+  useEffect(() => {
+    fetchVersion().then(setVersion).catch(() => {});
+  }, []);
 
   const onSignOut = async () => {
     await auth.logout();
@@ -62,6 +67,12 @@ export default function SettingsLayout() {
         <main className="overflow-y-auto p-8">
           <div className="max-w-3xl mx-auto">
             <Outlet />
+            {version && (
+              <p className="mt-12 text-[11px] text-muted-foreground tabular-nums">
+                Build {version.short}
+                {version.built_at && ` · ${version.built_at}`}
+              </p>
+            )}
           </div>
         </main>
       </div>

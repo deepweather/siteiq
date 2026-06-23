@@ -965,7 +965,8 @@ exist" subsection entries from the prior revision.
 | Editor v2 snap-to-grid | — | 8 (EditorCanvas) |
 | Editor v2 Gantt | — | 8 (ScheduleEditor) |
 | Editor v2 floorplan | 9 | 3 (LevelManager) |
-| **Totals before / after** | **192 → 284** | **52 → 99** |
+| Project-list audit fixes | 3 | — |
+| **Totals before / after** | **192 → 287** | **52 → 99** |
 
 End-to-end smoke verified via the browser MCP (auth → editor → preview
 panel → snap pills → schedule drag → background upload → activate →
@@ -1016,6 +1017,69 @@ These changes raise `renderer.ts` from ~768 LOC to ~970 LOC; the
 Phase-6 lock-in rule that kept it untouched during the editor build
 is now relaxed for documented bug fixes (label overlap is a real UX
 defect, not a feature addition).
+
+### Project list audit fixes (second handoff round)
+
+A second walkthrough turned up six more bugs that the unit tests
+hadn't caught because they all went through the React click path,
+not the fetch fixture. Fixed in `eb6947f`:
+
+- `pages/projects/ProjectListPage.tsx` — `+ New project` and the
+  `Duplicate` button used `window.prompt()`, which silently no-ops
+  in embedded browsers / the Cursor MCP webview and is a 1998-grade
+  UX everywhere else. Replaced with an inline `ProjectModal` (slug +
+  name inputs, client-side validation mirroring the server's
+  `/^[a-z][a-z0-9-]*$/` slug rule + collision check, auto-disabled
+  Create button, backdrop blur, click-outside cancel). The duplicate
+  flow auto-fills `{source.slug}-copy-{N}` so the user never lands
+  on a 409.
+- `api/projects.py` — added `is_active: bool` to every
+  `ProjectListItem`. True when the project's `current_version_id`
+  matches `org.active_project_version_id`, OR (legacy path) the
+  project's slug matches `org.active_project_id` when the version
+  pointer isn't set. Without this the project-list UI couldn't tell
+  the user which Activate button is the destructive one.
+- `pages/projects/ProjectListPage.tsx` — renders a green `● Active`
+  pill on the active card, swaps its border for `border-primary/60
+  ring-1 ring-primary/20`, and the Activate button becomes a
+  disabled "Activated". Clicking the disabled button just navs back
+  to `/app` instead of hitting the activate endpoint.
+- `state/registry.py` — `for_org_at_version` previously rebuilt the
+  engine whenever `engine.project_version_id != version_id`. But
+  legacy seed-loaded engines (`for_org('munich-sewer')`) carry
+  `project_version_id = None`, so any subsequent activate-call
+  mis-detected them as stale and tore the engine down — wiping
+  applied recommendations, the sim day, every per-worker timer.
+  Registry now tags the engine in place when its slug + null version
+  match the document being activated, instead of rebuilding. The
+  seed importer is idempotent on content hash, so a slug-equal
+  engine is, by construction, running the same document.
+- `api/routes.py` — `POST /api/site/load-seed` had the same
+  destructive behaviour (called `engine.load_project` unconditionally
+  even when the slug was already active). Now skipped when
+  `source.project_id == req.slug`.
+- `components/editor/EditorCanvas.tsx` — extended the
+  collision-avoidance pattern from `renderer.ts` into the editor
+  canvas, where Munich's linear Kanalsanierung otherwise mashed
+  half-a-dozen subtype labels into one strip. Selected markers'
+  labels are always painted so the cursor target never disappears.
+- `pages/settings/TeamSettings.tsx` — audit-log payload column was
+  printing raw JSON (`{"project_id":"9b681...","version_id":"..."}`)
+  that scrolled off the card. Added `formatAuditPayload` that folds
+  SHA-256 + UUID values to their first 8 chars and joins keys with
+  `·`, e.g. `project_id=9b681a37 · version_id=a3999e92`.
+
+Added 3 regression tests:
+- `test_project_list_marks_active_project` — `is_active` flag flips
+  on after activate.
+- `test_reactivate_same_version_preserves_engine_state` — clicking
+  Activate twice in a row on the same project doesn't rewind
+  `sim_day`.
+- `test_reactivate_seed_after_slug_load_preserves_engine` — the
+  common case where the engine boots from a seed slug then the user
+  clicks Activate on that same seed: no rebuild.
+
+Backend `284 → 287`; frontend `99` unchanged; lint + build clean.
 
 Microbench gates locked in:
 

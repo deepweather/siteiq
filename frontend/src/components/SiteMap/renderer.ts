@@ -75,6 +75,11 @@ export function renderFrame(
   if (selectedAssetId) drawSelectionHighlight(ctx, assets, selectedAssetId);
   if (recentApply) drawRecentApplyGlow(ctx, assets, recentApply);
 
+  // Zone labels go on top of every asset so the user always sees which
+  // zone is which, even when sheet piles / cranes / pumps cluster in
+  // the same corner of the zone as the label pill.
+  drawZoneLabels(ctx, zones);
+
   drawScaleBar(ctx, cw, ch);
   drawLegend(ctx, cw);
 }
@@ -195,15 +200,33 @@ function drawZoneStructures(ctx: CanvasRenderingContext2D, zones: Zone[]) {
       ctx.fillStyle = '#e8e4dc';
       ctx.fillRect(x, y, w, h);
     }
+  }
+}
+
+/** Zone name pills, drawn as the very last layer so they sit on top
+ *  of every asset marker. Without this they used to be hidden behind
+ *  equipment placed near the zone's top-left corner (e.g. the Munich
+ *  Tiefbau zones each have a sheet pile right under "Abschnitt X"). */
+function drawZoneLabels(ctx: CanvasRenderingContext2D, zones: Zone[]) {
+  for (const z of zones) {
+    const x = px(z.x);
+    const y = py(z.y);
+    const w = ps(z.width);
 
     const label = z.label;
     const fontSize = Math.max(8, Math.min(11, w / 8));
     ctx.font = `700 ${fontSize}px Inter, sans-serif`;
     const tw = ctx.measureText(label).width + 12;
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    // Fully opaque white pill — the previous 0.85 alpha let equipment
+    // icons bleed through and made the label hard to read.
+    ctx.fillStyle = '#ffffff';
     roundRect(ctx, x + 3, y + 3, Math.max(tw, ps(12)), fontSize + 6, 2);
     ctx.fill();
-    ctx.fillStyle = '#333';
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 3, y + 3, Math.max(tw, ps(12)), fontSize + 6, 2);
+    ctx.stroke();
+    ctx.fillStyle = '#1f2937';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText(label, x + 7, y + 6);
@@ -479,12 +502,28 @@ function drawEquipmentTopDown(ctx: CanvasRenderingContext2D, equipment: AssetUpd
     tower_crane: '🏗️',
     concrete_pump: '🚛',
     excavator: '🚜',
+    // Tiefbau additions — without these, the Munich seed fell back to
+    // the raw subtype string ("sheet_pile") with no friendly glyph.
+    sheet_pile: '⛓️',
+    dewatering_pump: '💧',
   };
   const LABELS: Record<string, string> = {
     tower_crane: 'CRANE',
     concrete_pump: 'PUMP',
     excavator: 'EXCAVATOR',
+    sheet_pile: 'SHORING',
+    dewatering_pump: 'PUMP',
   };
+
+  // Bounding boxes of labels we've already painted this frame. Used
+  // for cheap rectangle-overlap collision avoidance — Munich's linear
+  // Kanalsanierung site packs four sheet piles + two dewatering pumps
+  // + a crane into a 200 m strip, so otherwise every label stacks on
+  // top of the next one. Cleared per call (this function is invoked
+  // once per RAF frame).
+  const painted: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  const overlaps = (r: { x0: number; y0: number; x1: number; y1: number }) =>
+    painted.some((p) => !(r.x1 < p.x0 || r.x0 > p.x1 || r.y1 < p.y0 || r.y0 > p.y1));
 
   for (const e of equipment) {
     if (e.state === 'removed') continue;
@@ -518,10 +557,26 @@ function drawEquipmentTopDown(ctx: CanvasRenderingContext2D, equipment: AssetUpd
     ctx.font = labelFont;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillText(LABELS[e.subtype] || e.subtype, x, y + glowR + 2);
-    ctx.fillStyle = operating ? '#16a34a' : '#dc2626';
-    ctx.fillText(operating ? 'ACTIVE' : 'IDLE', x, y + glowR + 2 + Math.max(9, ps(3)));
+    const subtypeLabel = LABELS[e.subtype] || e.subtype;
+    const statusLabel = operating ? 'ACTIVE' : 'IDLE';
+    const subtypeWidth = ctx.measureText(subtypeLabel).width;
+    const statusWidth = ctx.measureText(statusLabel).width;
+    const labelHeight = Math.max(9, ps(3));
+    const subY = y + glowR + 2;
+    const statusY = subY + labelHeight;
+    const subRect = { x0: x - subtypeWidth / 2, x1: x + subtypeWidth / 2, y0: subY, y1: subY + labelHeight };
+    const statusRect = { x0: x - statusWidth / 2, x1: x + statusWidth / 2, y0: statusY, y1: statusY + labelHeight };
+
+    if (!overlaps(subRect)) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText(subtypeLabel, x, subY);
+      painted.push(subRect);
+    }
+    if (!overlaps(statusRect)) {
+      ctx.fillStyle = operating ? '#16a34a' : '#dc2626';
+      ctx.fillText(statusLabel, x, statusY);
+      painted.push(statusRect);
+    }
   }
 }
 
@@ -590,6 +645,14 @@ function drawMaterialStacks(ctx: CanvasRenderingContext2D, materials: AssetUpdat
     concrete: 'CONCRETE',
   };
 
+  // Same collision-avoidance trick as drawEquipmentTopDown. Munich's
+  // linear Kanalsanierung site lines up 5+ material stacks of the same
+  // subtype right next to each other; without skipping overlapping
+  // labels the row would be a solid blur of "CONCRETE CONCRETE CONCRETE".
+  const painted: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  const overlaps = (r: { x0: number; y0: number; x1: number; y1: number }) =>
+    painted.some((p) => !(r.x1 < p.x0 || r.x0 > p.x1 || r.y1 < p.y0 || r.y0 > p.y1));
+
   for (const m of materials) {
     const x = px(m.x);
     const y = py(m.y);
@@ -600,9 +663,17 @@ function drawMaterialStacks(ctx: CanvasRenderingContext2D, materials: AssetUpdat
     ctx.fillText(ICONS[m.subtype] || '📦', x, y);
 
     ctx.font = labelFont;
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.textBaseline = 'top';
-    ctx.fillText(LABELS[m.subtype] || m.subtype, x, y + iconSize * 0.45);
+    const label = LABELS[m.subtype] || m.subtype;
+    const labelWidth = ctx.measureText(label).width;
+    const labelHeight = Math.max(6, ps(2));
+    const labelY = y + iconSize * 0.45;
+    const rect = { x0: x - labelWidth / 2, x1: x + labelWidth / 2, y0: labelY, y1: labelY + labelHeight };
+    if (!overlaps(rect)) {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillText(label, x, labelY);
+      painted.push(rect);
+    }
   }
 }
 
@@ -731,6 +802,16 @@ function drawHeatmapLegend(ctx: CanvasRenderingContext2D, cw: number, ch: number
 }
 
 function drawRecommendationArrows(ctx: CanvasRenderingContext2D, recs: Recommendation[]) {
+  // Recommendation cost chips ("€89/day") get the same overlap dodge
+  // as equipment labels — Munich's linear cuts produced 4-5 stacked
+  // arrows whose chips printed on top of each other. We bump the chip
+  // up by a stride whenever the candidate rectangle collides with an
+  // already-painted one.
+  const chipsPainted: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  const overlaps = (r: { x0: number; y0: number; x1: number; y1: number }) =>
+    chipsPainted.some((p) => !(r.x1 < p.x0 || r.x0 > p.x1 || r.y1 < p.y0 || r.y0 > p.y1));
+  const STRIDE = 18; // px between alternative chip positions
+
   for (const rec of recs) {
     if (rec.applied || !rec.to_position) continue;
     const x1 = px(rec.from_position.x);
@@ -762,10 +843,19 @@ function drawRecommendationArrows(ctx: CanvasRenderingContext2D, recs: Recommend
     ctx.fill();
 
     const mx = (x1 + x2) / 2;
-    const my = (y1 + y2) / 2 - 10;
     const text = `€${Math.round(rec.daily_savings)}/day`;
     ctx.font = `700 9px 'JetBrains Mono', monospace`;
     const tw = ctx.measureText(text).width;
+    let my = (y1 + y2) / 2 - 10;
+    let rect = { x0: mx - tw / 2 - 4, x1: mx + tw / 2 + 4, y0: my - 7, y1: my + 7 };
+    // Walk the chip upward in STRIDE steps until it stops colliding.
+    // Limit to 4 tries so a degenerate cluster doesn't run off-canvas;
+    // after that we accept overlap (better than no chip at all).
+    for (let attempt = 0; attempt < 4 && overlaps(rect); attempt++) {
+      my -= STRIDE;
+      rect = { x0: mx - tw / 2 - 4, x1: mx + tw / 2 + 4, y0: my - 7, y1: my + 7 };
+    }
+    chipsPainted.push(rect);
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
     roundRect(ctx, mx - tw / 2 - 4, my - 7, tw + 8, 14, 3);
     ctx.fill();

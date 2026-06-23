@@ -971,6 +971,52 @@ End-to-end smoke verified via the browser MCP (auth → editor → preview
 panel → snap pills → schedule drag → background upload → activate →
 dashboard SiteMap renders the floor plan under the simulation overlay).
 
+### Dashboard UX polish (post-handoff fixes)
+
+A round of fixes after the first live walkthrough surfaced layout +
+readability bugs that the unit tests didn't catch:
+
+- `TopBar.tsx` — the three-column flexbox previously let the left
+  cluster (logo / Portfolio / Projects / Settings) grow into the
+  centred sim clock, wrapping "7:24 AM" to two lines and visually
+  stacking the Settings button on top of it. Each cluster now uses
+  `shrink-0` + `whitespace-nowrap`, the centre group has `min-w-0`
+  + nowrap, and the right cluster's project-name button truncates
+  rather than pushing the clock out.
+- `SiteMap/LevelSwitcher.tsx` — moved from `top-2 right-2` to
+  `top-2 left-2`. Renderer paints its trade / Active / Idle legend
+  in the top-right corner, so a right-aligned switcher visibly
+  overlapped that legend.
+- `components/common/ToastContainer.tsx` — each tone used to apply
+  `bg-card` + `bg-X/5`, and because Tailwind orders the later class
+  last, the 5%-alpha tint clobbered the card background, leaving the
+  toast looking transparent / "unstyled" against the canvas. We now
+  keep `bg-card` as the substrate (solid white in light mode) and
+  convey the tone via the border (`border-X/40`) and the icon chip
+  (`bg-X/15`) only.
+- `SiteMap/renderer.ts` — three targeted additions:
+  1. Zone labels were drawn during `drawZoneStructures` (early in the
+     pipeline), so equipment markers placed near a zone's top-left
+     corner painted on top of the label pill. Extracted to
+     `drawZoneLabels`, called as the very last asset-layer step so
+     the pill always sits on top, and the pill background is now
+     fully opaque (was 85%-alpha so equipment bled through).
+  2. `drawEquipmentTopDown` previously drew every label without
+     overlap detection — Munich's 4 sheet piles + 2 dewatering pumps
+     + crane (~200 m strip) all stacked their `sheet_pile ACTIVE`
+     labels. Added a per-call painted-rectangle list; new labels are
+     skipped if they would overlap an existing one. Same dodge for
+     `drawMaterialStacks` and the recommendation cost chips inside
+     `drawRecommendationArrows`. Also extended the `LABELS` table
+     with friendly names for `sheet_pile` ("SHORING") and
+     `dewatering_pump` ("PUMP") instead of falling back to the raw
+     subtype string.
+
+These changes raise `renderer.ts` from ~768 LOC to ~970 LOC; the
+Phase-6 lock-in rule that kept it untouched during the editor build
+is now relaxed for documented bug fixes (label overlap is a real UX
+defect, not a feature addition).
+
 Microbench gates locked in:
 
 - `test_tick_under_5ms_at_full_load` (Phase 0) — 50 ticks of `isar-bridge` average < 5 ms.

@@ -1,23 +1,28 @@
 import { useEffect, useState } from 'react';
 import { dismissToast, subscribeToasts, type Toast } from '../../utils/toasts';
 
+// Tone styling. The earlier `bg-X/5` overlay actually clobbered the
+// card background (Tailwind applies the later `bg-*` class), leaving
+// the toast looking transparent / "unstyled" because 5% alpha let the
+// canvas behind show through. We now keep `bg-card` as the substrate
+// and rely on the border + icon chip to convey the tone.
 const TONE_STYLES: Record<Toast['tone'], { ring: string; text: string; icon: string; iconBg: string }> = {
   success: {
-    ring: 'border-success/30 bg-success/5',
+    ring: 'border-success/40',
     text: 'text-success',
-    iconBg: 'bg-success/20',
+    iconBg: 'bg-success/15',
     icon: '\u2713',
   },
   info: {
-    ring: 'border-primary/30 bg-primary/5',
+    ring: 'border-primary/40',
     text: 'text-primary',
-    iconBg: 'bg-primary/20',
+    iconBg: 'bg-primary/15',
     icon: 'i',
   },
   warning: {
-    ring: 'border-warning/30 bg-warning/5',
+    ring: 'border-warning/40',
     text: 'text-warning',
-    iconBg: 'bg-warning/20',
+    iconBg: 'bg-warning/15',
     icon: '!',
   },
 };

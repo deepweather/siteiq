@@ -56,8 +56,12 @@ export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, 
   };
 
   return (
-    <div className="h-12 bg-card border-b border-border flex items-center px-4 shrink-0 shadow-sm">
-      <div className="flex items-center gap-3 min-w-[200px]">
+    <div className="h-12 bg-card border-b border-border flex items-center gap-3 px-4 shrink-0 shadow-sm">
+      {/* Left cluster: brand + nav. shrink-0 so it never gets eaten by the
+          centre block; whitespace-nowrap on every text element so labels
+          never wrap into a second baseline (the bug that overlapped
+          "Settings" with the sim clock on narrow viewports). */}
+      <div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 bg-primary rounded-md flex items-center justify-center">
             <span className="text-primary-foreground text-xs font-bold">S</span>
@@ -87,13 +91,18 @@ export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, 
         )}
       </div>
 
-      <div className="flex-1 flex items-center justify-center gap-4">
+      {/* Centre cluster: sim clock + transport controls. flex-1 so it
+          fills the remaining row, whitespace-nowrap on the text so the
+          "Day N" + clock never break onto two lines, and shrink-0 on
+          the buttons so transport stays usable even when the project
+          name on the right is long. */}
+      <div className="flex-1 flex items-center justify-center gap-3 whitespace-nowrap min-w-0">
         <span className="font-mono text-sm tabular-nums text-foreground">
           {formatSimTime(simTime)}
         </span>
         <span className="text-muted-foreground text-sm">Day {simDay}</span>
 
-        <div className="flex items-center gap-1 ml-2">
+        <div className="flex items-center gap-1 ml-2 shrink-0">
           <button
             onClick={handlePause}
             className="w-7 h-7 flex items-center justify-center rounded-md text-xs border border-border hover:bg-secondary text-muted-foreground"
@@ -104,7 +113,7 @@ export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, 
             <button
               key={s}
               onClick={() => handleSpeed(s)}
-              className={`px-2 h-7 rounded-md text-xs font-mono ${
+              className={`px-2 h-7 rounded-md text-xs font-mono shrink-0 ${
                 activeSpeed === s
                   ? 'bg-primary text-primary-foreground'
                   : 'border border-border text-muted-foreground hover:bg-secondary'
@@ -116,19 +125,22 @@ export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, 
         </div>
       </div>
 
-      <div className="flex items-center gap-2 min-w-[280px] justify-end">
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary">
+      {/* Right cluster: live indicator + project switcher. shrink-0 on
+          the live pill stops the dot from collapsing; the project name
+          truncates rather than pushing the centre out. */}
+      <div className="flex items-center gap-2 justify-end shrink-0 min-w-0">
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary shrink-0">
           <span className={`w-2 h-2 rounded-full ${connected ? 'bg-success' : 'bg-destructive'}`} />
           <span className="text-xs text-muted-foreground">{connected ? 'Live' : 'Offline'}</span>
         </div>
 
-        <div className="relative" ref={pickerRef}>
+        <div className="relative min-w-0" ref={pickerRef}>
           <button
             onClick={() => setShowPicker(!showPicker)}
             disabled={switching}
             className="text-sm text-foreground font-medium truncate max-w-[200px] hover:text-primary transition-colors flex items-center gap-1"
           >
-            {switching ? 'Loading...' : siteName}
+            <span className="truncate">{switching ? 'Loading...' : siteName}</span>
             <svg className="w-3 h-3 text-muted-foreground shrink-0" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M3 5l3 3 3-3" />
             </svg>

@@ -15,7 +15,11 @@ export function LevelSwitcher({ levels, activeLevel, onLevelChange }: LevelSwitc
   // Sort descending by `order` so Dach is at the top.
   const sorted = [...levels].sort((a, b) => b.order - a.order);
   return (
-    <div className="absolute top-2 right-2 flex flex-col gap-0.5 bg-card/95 border border-border rounded-md p-1 shadow-sm backdrop-blur z-10">
+    // Top-LEFT, not top-right: renderer.ts paints its trade / status
+    // legend in the top-right corner of the canvas, so a right-aligned
+    // switcher visibly overlapped that legend. Left side is otherwise
+    // empty until the user pans the map.
+    <div className="absolute top-2 left-2 flex flex-col gap-0.5 bg-card/95 border border-border rounded-md p-1 shadow-sm backdrop-blur z-10">
       {sorted.map((lv) => {
         const isActive = lv.id === activeLevel;
         return (

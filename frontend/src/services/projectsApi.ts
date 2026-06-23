@@ -19,6 +19,10 @@ export interface ProjectListItem {
   status: string;
   current_version_id: string | null;
   is_owner: boolean;
+  /** True iff this project's current version is the one the org's
+   *  simulation is currently pinned to. Drives the "Active" badge
+   *  + Activate-button-disabled treatment on the project list. */
+  is_active?: boolean;
 }
 
 // Pydantic-mirrored canonical document. Re-using the model directly

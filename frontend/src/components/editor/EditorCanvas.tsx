@@ -303,6 +303,15 @@ export function EditorCanvas({ document, activeLevel, tool, selection, onSelect,
       ctx.fillText(z.label, px(lx) + 4, py(ly) + 12);
     }
 
+    // Bounding boxes of labels we've already painted this frame, used
+    // to skip drawing a marker label whose rect would overlap one
+    // already on screen — otherwise dense linear sites (the Munich
+    // Tiefbau seed) cram half-a-dozen subtype names on top of each
+    // other in a single 200 m strip.
+    const paintedLabels: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    const overlapsLabel = (r: { x0: number; y0: number; x1: number; y1: number }) =>
+      paintedLabels.some((p) => !(r.x1 < p.x0 || r.x0 > p.x1 || r.y1 < p.y0 || r.y0 > p.y1));
+
     const drawMarker = (x: number, y: number, color: string, label: string, selected: boolean) => {
       ctx.beginPath();
       ctx.fillStyle = color;
@@ -315,9 +324,18 @@ export function EditorCanvas({ document, activeLevel, tool, selection, onSelect,
         ctx.arc(px(x), py(y), 9, 0, Math.PI * 2);
         ctx.stroke();
       }
-      ctx.fillStyle = '#1f2937';
       ctx.font = '9px Inter, sans-serif';
-      ctx.fillText(label, px(x) + 8, py(y) - 6);
+      const w = ctx.measureText(label).width;
+      // The label is left-anchored at (px+8, py-6) with textBaseline
+      // implicitly alphabetic — its visual rect is roughly:
+      const labelX0 = px(x) + 8;
+      const labelY0 = py(y) - 15;
+      const rect = { x0: labelX0, y0: labelY0, x1: labelX0 + w, y1: labelY0 + 11 };
+      if (selected || !overlapsLabel(rect)) {
+        ctx.fillStyle = '#1f2937';
+        ctx.fillText(label, labelX0, py(y) - 6);
+        paintedLabels.push(rect);
+      }
     };
 
     for (const f of document.facilities) {

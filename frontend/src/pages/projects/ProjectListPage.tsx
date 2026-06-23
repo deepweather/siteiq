@@ -5,6 +5,11 @@
  *  - "My projects" — org-owned, editable.
  *  - "Templates" — public stock seeds. Read-only here, but can be
  *    duplicated to make a new org-owned project.
+ *
+ * Create + duplicate go through an inline modal (rather than
+ * `window.prompt`) so the flow works in every browser context
+ * (embedded webviews, automated tests, etc.) and doesn't look like
+ * a 1998 prompt() popup.
  */
 import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
@@ -19,12 +24,19 @@ import {
 } from '../../services/projectsApi';
 import { useAuth } from '../../lib/auth/AuthProvider';
 
+type ModalState =
+  | { kind: 'new' }
+  | { kind: 'duplicate'; source: ProjectListItem }
+  | null;
+
 export default function ProjectListPage() {
   const nav = useNavigate();
   const { org } = useAuth();
   const [items, setItems] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [modal, setModal] = useState<ModalState>(null);
+  const [busy, setBusy] = useState(false);
 
   const refresh = () => {
     setLoading(true);
@@ -40,11 +52,9 @@ export default function ProjectListPage() {
 
   const isOwnerRole = org?.role === 'owner' || org?.role === 'admin';
 
-  const onCreate = async () => {
-    if (!isOwnerRole) return;
-    const slug = window.prompt('Project slug (lowercase, dashes):');
-    if (!slug) return;
-    const name = window.prompt('Project name:', slug) ?? slug;
+  const onConfirmCreate = async (slug: string, name: string) => {
+    setBusy(true);
+    setError(null);
     try {
       const doc = blankProjectDocument(slug, name);
       // Seed with one zone so the editor opens with something on screen.
@@ -56,29 +66,46 @@ export default function ProjectListPage() {
       nav(`/app/projects/${detail.id}/edit`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'create failed');
+    } finally {
+      setBusy(false);
     }
   };
 
-  const onDuplicate = async (item: ProjectListItem) => {
+  const onConfirmDuplicate = async (source: ProjectListItem, slug: string, name: string) => {
+    setBusy(true);
+    setError(null);
     try {
-      const src = await getProject(item.id);
-      const slug = window.prompt('New slug:', `${item.slug}-copy`);
-      if (!slug) return;
+      const src = await getProject(source.id);
       const cloned: ProjectDocument = {
         ...src.document,
         slug,
-        name: `${src.document.name} (copy)`,
+        name,
       };
-      const detail = await createProject(cloned, { message: 'Duplicated' });
+      const detail = await createProject(cloned, { message: `Duplicated from ${source.slug}` });
       nav(`/app/projects/${detail.id}/edit`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'duplicate failed');
+    } finally {
+      setBusy(false);
     }
   };
 
   const onActivate = async (item: ProjectListItem) => {
-    await activateProject(item.id);
-    nav('/app');
+    // Idempotent UX: if the project is already active, just jump back to
+    // the dashboard rather than calling activate (which audit-logs +
+    // rebuilds the engine, losing applied-recommendation state).
+    if (item.is_active) {
+      nav('/app');
+      return;
+    }
+    setBusy(true);
+    try {
+      await activateProject(item.id);
+      nav('/app');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'activate failed');
+      setBusy(false);
+    }
   };
 
   const mine = items.filter((p) => p.is_owner);
@@ -103,7 +130,7 @@ export default function ProjectListPage() {
           {isOwnerRole && (
             <button
               type="button"
-              onClick={onCreate}
+              onClick={() => setModal({ kind: 'new' })}
               className="px-3 py-1.5 text-xs font-semibold rounded bg-primary text-primary-foreground hover:bg-primary/90"
             >
               + New project
@@ -117,14 +144,17 @@ export default function ProjectListPage() {
       )}
 
       <div className="px-6 py-6 max-w-6xl space-y-8">
-        <Section title="My projects" empty={!loading && mine.length === 0 ? 'You have no custom projects yet.' : null}>
+        <Section
+          title="My projects"
+          empty={!loading && mine.length === 0 ? 'You have no custom projects yet — duplicate a template below to start.' : null}
+        >
           {mine.map((p) => (
             <ProjectCard
               key={p.id}
               item={p}
               onOpen={() => nav(`/app/projects/${p.id}/edit`)}
               onActivate={() => onActivate(p)}
-              onDuplicate={() => onDuplicate(p)}
+              onDuplicate={() => setModal({ kind: 'duplicate', source: p })}
             />
           ))}
         </Section>
@@ -134,11 +164,42 @@ export default function ProjectListPage() {
               key={p.id}
               item={p}
               onActivate={() => onActivate(p)}
-              onDuplicate={isOwnerRole ? () => onDuplicate(p) : undefined}
+              onDuplicate={isOwnerRole ? () => setModal({ kind: 'duplicate', source: p }) : undefined}
             />
           ))}
         </Section>
       </div>
+
+      {modal?.kind === 'new' && (
+        <ProjectModal
+          title="Create new project"
+          submitLabel="Create"
+          initialSlug=""
+          initialName=""
+          busy={busy}
+          existingSlugs={items.map((p) => p.slug)}
+          onCancel={() => setModal(null)}
+          onSubmit={async (slug, name) => {
+            await onConfirmCreate(slug, name);
+            setModal(null);
+          }}
+        />
+      )}
+      {modal?.kind === 'duplicate' && (
+        <ProjectModal
+          title={`Duplicate "${modal.source.name}"`}
+          submitLabel="Duplicate"
+          initialSlug={uniqueSlug(`${modal.source.slug}-copy`, items.map((p) => p.slug))}
+          initialName={`${modal.source.name} (copy)`}
+          busy={busy}
+          existingSlugs={items.map((p) => p.slug)}
+          onCancel={() => setModal(null)}
+          onSubmit={async (slug, name) => {
+            await onConfirmDuplicate(modal.source, slug, name);
+            setModal(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -166,17 +227,23 @@ function ProjectCard({ item, onOpen, onActivate, onDuplicate }: {
   onDuplicate?: () => void;
 }) {
   return (
-    <div className="border border-border rounded-lg p-3 bg-card flex flex-col gap-2">
+    <div className={`border rounded-lg p-3 bg-card flex flex-col gap-2 ${item.is_active ? 'border-primary/60 ring-1 ring-primary/20' : 'border-border'}`}>
       <div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <h3 className="text-sm font-semibold text-foreground truncate">{item.name}</h3>
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          {item.is_active && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-success/15 text-success border border-success/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-success" />
+              Active
+            </span>
+          )}
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider ml-auto">
             {item.discipline}
           </span>
         </div>
         <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{item.description}</p>
       </div>
-      <div className="text-[10px] text-muted-foreground font-mono mt-auto">
+      <div className="text-[10px] text-muted-foreground font-mono mt-auto truncate">
         <code>{item.slug}</code>
         {item.current_version_id && (
           <span className="ml-2 opacity-60">v{item.current_version_id.slice(0, 8)}</span>
@@ -196,9 +263,16 @@ function ProjectCard({ item, onOpen, onActivate, onDuplicate }: {
           <button
             type="button"
             onClick={onActivate}
-            className="flex-1 px-2 py-1 text-xs font-medium rounded border border-border hover:bg-secondary"
+            disabled={item.is_active}
+            className={
+              'flex-1 px-2 py-1 text-xs font-medium rounded border ' +
+              (item.is_active
+                ? 'border-border text-muted-foreground cursor-default opacity-60'
+                : 'border-border hover:bg-secondary')
+            }
+            title={item.is_active ? 'Already running' : 'Pin the simulation to this project'}
           >
-            Activate
+            {item.is_active ? 'Activated' : 'Activate'}
           </button>
         )}
         {onDuplicate && (
@@ -213,4 +287,129 @@ function ProjectCard({ item, onOpen, onActivate, onDuplicate }: {
       </div>
     </div>
   );
+}
+
+interface ProjectModalProps {
+  title: string;
+  submitLabel: string;
+  initialSlug: string;
+  initialName: string;
+  busy: boolean;
+  existingSlugs: string[];
+  onCancel: () => void;
+  onSubmit: (slug: string, name: string) => Promise<void>;
+}
+
+function ProjectModal({ title, submitLabel, initialSlug, initialName, busy, existingSlugs, onCancel, onSubmit }: ProjectModalProps) {
+  const [slug, setSlug] = useState(initialSlug);
+  const [name, setName] = useState(initialName);
+  const [touched, setTouched] = useState({ slug: false, name: false });
+
+  // Cheap inline validation: lowercase letters, digits, dashes, no leading
+  // dash. Mirrors the server's slug constraint so users don't get a 400
+  // surprise after submitting.
+  const slugValid = /^[a-z][a-z0-9-]*$/.test(slug);
+  const slugTaken = existingSlugs.includes(slug);
+  const nameValid = name.trim().length > 0;
+
+  const slugError = (touched.slug || slug.length > 0)
+    ? (!slugValid ? 'Use lowercase letters, digits and dashes (must start with a letter).'
+      : slugTaken ? 'A project with that slug already exists.'
+      : null)
+    : null;
+  const nameError = touched.name && !nameValid ? 'Project name is required.' : null;
+
+  const canSubmit = slugValid && !slugTaken && nameValid && !busy;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    await onSubmit(slug.trim(), name.trim());
+  };
+
+  // Initial form has no name? Auto-fill from slug.
+  useEffect(() => {
+    if (!name && slug) setName(slug);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="project-modal-title"
+      onClick={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}
+    >
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md bg-card border border-border rounded-xl shadow-xl"
+      >
+        <div className="px-5 pt-4 pb-3 border-b border-border">
+          <h2 id="project-modal-title" className="text-base font-semibold text-foreground">{title}</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            The slug is a stable id used in URLs and the seed bundle — pick something short and unique.
+          </p>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <label className="block">
+            <span className="text-xs font-medium text-foreground">Slug</span>
+            <input
+              autoFocus
+              type="text"
+              value={slug}
+              onChange={(e) => setSlug(e.target.value)}
+              onBlur={() => setTouched((t) => ({ ...t, slug: true }))}
+              placeholder="my-new-site"
+              className={`mt-1 w-full px-3 py-2 border rounded text-sm font-mono bg-background focus:ring-1 outline-none ${slugError ? 'border-destructive focus:ring-destructive' : 'border-border focus:ring-primary'}`}
+            />
+            {slugError && (
+              <span className="text-[11px] text-destructive mt-1 block">{slugError}</span>
+            )}
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-foreground">Name</span>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => setTouched((t) => ({ ...t, name: true }))}
+              placeholder="My New Site"
+              className={`mt-1 w-full px-3 py-2 border rounded text-sm bg-background focus:ring-1 outline-none ${nameError ? 'border-destructive focus:ring-destructive' : 'border-border focus:ring-primary'}`}
+            />
+            {nameError && (
+              <span className="text-[11px] text-destructive mt-1 block">{nameError}</span>
+            )}
+          </label>
+        </div>
+        <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="px-3 py-1.5 text-xs font-medium rounded border border-border hover:bg-secondary disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="px-3 py-1.5 text-xs font-semibold rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {busy ? 'Working…' : submitLabel}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/** Generate a slug that isn't in `taken`. Appends `-2`, `-3`, … until
+ *  a slot opens. Keeps the duplicate-modal pre-filled with something
+ *  that won't 409 on submit. */
+function uniqueSlug(base: string, taken: string[]): string {
+  if (!taken.includes(base)) return base;
+  let i = 2;
+  while (taken.includes(`${base}-${i}`)) i += 1;
+  return `${base}-${i}`;
 }

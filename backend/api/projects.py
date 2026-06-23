@@ -63,6 +63,11 @@ class ProjectListItem(BaseModel):
     status: str
     current_version_id: str | None
     is_owner: bool
+    # True iff this project's current version is the one the org's
+    # simulation is currently pinned to. The project list page needs
+    # this to render an "Active" badge — otherwise the user can't tell
+    # which Activate button to NOT click.
+    is_active: bool = False
 
 
 class ProjectDetailResponse(BaseModel):
@@ -149,7 +154,22 @@ def _can_edit(project_org_id: str | None, current_org_id: str) -> bool:
     return project_org_id == current_org_id
 
 
-def _to_list_item(summary, *, current_org_id: str) -> ProjectListItem:
+def _to_list_item(
+    summary,
+    *,
+    current_org_id: str,
+    active_version_id: str | None,
+    active_slug: str | None,
+) -> ProjectListItem:
+    # A project is "active" if its current version is what the org's
+    # engine is currently pinned to. We accept either the version-id
+    # match (post-editor activate) or the slug match (legacy seed path
+    # where active_project_version_id wasn't set yet).
+    is_active = False
+    if active_version_id is not None and summary.current_version_id == active_version_id:
+        is_active = True
+    elif active_version_id is None and active_slug is not None and summary.slug == active_slug:
+        is_active = True
     return ProjectListItem(
         id=summary.id,
         org_id=summary.org_id,
@@ -162,6 +182,7 @@ def _to_list_item(summary, *, current_org_id: str) -> ProjectListItem:
         status=summary.status,
         current_version_id=summary.current_version_id,
         is_owner=summary.org_id == current_org_id,
+        is_active=is_active,
     )
 
 
@@ -175,7 +196,15 @@ async def list_projects(
 ):
     repo = ProjectRepository(db)
     items = await repo.list_for_org(org.id)
-    return [_to_list_item(s, current_org_id=org.id) for s in items]
+    return [
+        _to_list_item(
+            s,
+            current_org_id=org.id,
+            active_version_id=org.active_project_version_id,
+            active_slug=org.active_project_id,
+        )
+        for s in items
+    ]
 
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)

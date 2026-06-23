@@ -100,10 +100,15 @@ async def load_seed_project(
     projects go through `POST /api/projects/{id}/activate` instead."""
     if req.slug not in PROJECT_TEMPLATES:
         raise HTTPException(status_code=404, detail="Project not found")
-    # The source's project-switch capability is simulation-specific.
-    if isinstance(source, SimulationEngine):
+    # Idempotent: if the engine is already running this slug, don't
+    # rebuild it. A rebuild would tear the engine down, wiping the
+    # current sim day + every applied recommendation — the same user-
+    # facing "I clicked the active project and lost my progress" bug
+    # the activate endpoint guards against. Re-loading a *different*
+    # seed still flows through `engine.load_project` as before.
+    if isinstance(source, SimulationEngine) and source.project_id != req.slug:
         source.load_project(req.slug)
-    rec_service.clear()
+        rec_service.clear()
     # Persist so the choice survives a backend restart.
     org.active_project_id = req.slug
     # Drop any pinned doc version so the next access falls back to the

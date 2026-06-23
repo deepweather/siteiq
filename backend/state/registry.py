@@ -91,6 +91,26 @@ class SourceRegistry:
         eng = self._engines.get(org_id)
         if eng is not None and eng.project_version_id == version_id:
             return eng
+        # Engines created via the legacy slug seed path (`for_org`) don't
+        # tag themselves with the seed's content-hash version, so a
+        # subsequent "activate this seed" call would mis-detect them as
+        # stale and tear down a perfectly good engine — wiping simulation
+        # day + every applied recommendation. The seed importer is
+        # idempotent on content hash, so an engine that's already loaded
+        # the same slug + has no version tag is, by construction, running
+        # the same document this method is about to load. Tag it instead
+        # of rebuilding.
+        if (
+            eng is not None
+            and eng.project_version_id is None
+            and eng.project_id == document.slug
+        ):
+            eng.project_version_id = version_id
+            logger.info(
+                "source_engine_tagged",
+                extra={"org_id": org_id, "slug": document.slug, "version": version_id[:8]},
+            )
+            return eng
         # Discard and rebuild on a version mismatch.
         if eng is not None:
             eng.running = False

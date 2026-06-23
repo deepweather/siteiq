@@ -216,7 +216,7 @@ export default function TeamSettings() {
                 <span className="font-medium">{e.kind}</span>
                 {Object.keys(e.payload).length > 0 && (
                   <span className="ml-2 text-muted-foreground text-xs">
-                    {JSON.stringify(e.payload)}
+                    {formatAuditPayload(e.payload)}
                   </span>
                 )}
               </div>
@@ -326,4 +326,27 @@ function DeleteWorkspaceSection({
       </div>
     </section>
   );
+}
+
+/** Render an audit-event payload as compact human-readable text instead
+ *  of a JSON blob — version ids get shortened to 8-char prefixes, UUID
+ *  project ids likewise, and `{}` braces drop entirely. Falls back to
+ *  `JSON.stringify` for unfamiliar payload shapes so we never silently
+ *  hide data. */
+function formatAuditPayload(payload: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(payload)) {
+    if (typeof v === 'string' && v.length === 64 && /^[0-9a-f]+$/i.test(v)) {
+      // SHA-256 content hash → first 8 chars.
+      parts.push(`${k}=${v.slice(0, 8)}`);
+    } else if (typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v)) {
+      // UUID → first 8 chars.
+      parts.push(`${k}=${v.slice(0, 8)}`);
+    } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      parts.push(`${k}=${v}`);
+    } else {
+      parts.push(`${k}=${JSON.stringify(v)}`);
+    }
+  }
+  return parts.join(' · ');
 }

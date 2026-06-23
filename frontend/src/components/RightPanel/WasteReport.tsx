@@ -176,7 +176,83 @@ export function WasteReport({ waste, baseline, savings, pendingSavingsMonthly, z
             />
           }
         />
+        {/* Phase 4: vertical-transport waste only renders when it's actually
+            costing something (single-floor projects keep it at 0). */}
+        {(waste.vertical_transport_daily ?? 0) > 0 && (
+          <CostRow
+            label="Vertical transport queues"
+            sublabel="Time workers spend waiting for or riding elevators"
+            daily={waste.vertical_transport_daily ?? 0}
+            monthly={waste.vertical_transport_monthly ?? 0}
+          />
+        )}
+        {/* Phase 5: Tiefbau shoring compliance — fires when any EXCAVATION zone
+            isn't backed by a sheet pile within the influence radius. Risk
+            metric, not € — but worth surfacing the same way. */}
+        {(() => {
+          const sc = waste.shoring_compliance ?? [];
+          const bad = sc.filter((z) => z.compliance < 1.0);
+          if (sc.length === 0 || bad.length === 0) return null;
+          return <ShoringComplianceRow issues={bad} totalZones={sc.length} />;
+        })()}
       </div>
+    </div>
+  );
+}
+
+
+function ShoringComplianceRow({ issues, totalZones }: {
+  issues: { zone_id: string; zone_label: string; nearest_distance_m?: number | null }[];
+  totalZones: number;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border border-destructive/30 bg-destructive/5 rounded-lg overflow-hidden">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="w-full p-3 text-left hover:bg-destructive/10 transition-colors"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="text-sm font-semibold text-destructive">
+                Unshored excavation
+              </span>
+              <span className="text-[10px] text-muted-foreground/70 font-normal">
+                {open ? 'hide zones' : 'view zones'}
+              </span>
+            </div>
+            <div className="text-[11px] text-muted-foreground leading-snug">
+              {issues.length} of {totalZones} excavation zones aren't backed by a
+              sheet pile within 25&nbsp;m. Safety + EU-DIN compliance risk.
+            </div>
+          </div>
+          <span
+            className={`text-muted-foreground transition-transform shrink-0 ${open ? 'rotate-180' : ''}`}
+            aria-hidden="true"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+        </div>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 pt-2 border-t border-destructive/30 bg-destructive/[0.03] space-y-1.5">
+          {issues.map((z) => (
+            <div key={z.zone_id} className="flex items-baseline justify-between gap-2 text-xs">
+              <span className="text-foreground font-medium truncate">{z.zone_label}</span>
+              <span className="font-mono text-destructive text-[11px] tabular-nums shrink-0">
+                {z.nearest_distance_m != null
+                  ? `nearest pile ${z.nearest_distance_m.toFixed(0)} m`
+                  : 'no sheet pile on this level'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

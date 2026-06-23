@@ -39,15 +39,25 @@ class _StubEngine:
     worker_internals: dict[str, WorkerInternals] = field(default_factory=dict)
     sim_time: float = 0.0
     activity_log: list[tuple[str, str]] = field(default_factory=list)
+    cabs: dict = field(default_factory=dict)
+    connections: list = field(default_factory=list)
 
     def log_activity(self, asset_id: str, event: str) -> None:
         self.activity_log.append((asset_id, event))
 
-    def facilities_by_subtype(self, subtype: str) -> list[Asset]:
-        return [a for a in self.assets if a.type == "facility" and a.subtype == subtype]
+    def facilities_by_subtype(
+        self, subtype: str, level_id: str | None = None
+    ) -> list[Asset]:
+        out = [a for a in self.assets if a.type == "facility" and a.subtype == subtype]
+        if level_id is not None:
+            out = [a for a in out if a.position.level_id == level_id]
+        return out
 
     def materials(self) -> list[Asset]:
         return [a for a in self.assets if a.type == "material"]
+
+    def connections_from_level(self, level_id: str) -> list:
+        return [c for c in self.connections if any(n.level_id == level_id for n in c.nodes)]
 
 
 def _make_worker_and_engine(state: str = WorkerState.WORKING) -> tuple[Asset, WorkerInternals, _StubEngine]:
@@ -75,6 +85,9 @@ def test_dispatch_table_covers_every_active_worker_state():
         WorkerState.WALKING_TO_BREAK,
         WorkerState.AT_BREAK,
         WorkerState.WALKING_TO_WORK,
+        # Phase 3: multi-level routing.
+        WorkerState.WALKING_TO_VERTICAL,
+        WorkerState.TRAVERSING_VERTICAL,
     }
     assert set(STATE_HANDLERS.keys()) == expected
 

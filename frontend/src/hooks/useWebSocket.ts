@@ -3,9 +3,21 @@ import type { AssetUpdate, Trail } from '../types/assets';
 import type { WasteSummary } from '../types/analytics';
 import { WS_BASE } from '../services/api';
 
+/** Live cab summary streamed at 10 Hz alongside the state update.
+ *  Used by the renderer to draw queue counts on stair/elevator anchors. */
+export interface CabSnapshot {
+  id: string;
+  current_level: string;
+  passengers: number;
+  capacity: number;
+  /** Map of level_id → queue depth (only levels with non-empty queues). */
+  queue_by_level: Record<string, number>;
+}
+
 interface WebSocketState {
   assetsRef: React.MutableRefObject<AssetUpdate[]>;
   trailsRef: React.MutableRefObject<Trail>;
+  cabsRef: React.MutableRefObject<CabSnapshot[]>;
   analytics: WasteSummary | null;
   simTime: number;
   simDay: number;
@@ -15,6 +27,7 @@ interface WebSocketState {
 export function useWebSocket(): WebSocketState {
   const assetsRef = useRef<AssetUpdate[]>([]);
   const trailsRef = useRef<Trail>({});
+  const cabsRef = useRef<CabSnapshot[]>([]);
   const [analytics, setAnalytics] = useState<WasteSummary | null>(null);
   const [simTime, setSimTime] = useState(0);
   const [simDay, setSimDay] = useState(47);
@@ -44,6 +57,7 @@ export function useWebSocket(): WebSocketState {
       if (data.type === 'state_update') {
         assetsRef.current = data.assets;
         trailsRef.current = data.trails;
+        cabsRef.current = data.cabs ?? [];
         setSimTime(data.sim_time);
         setSimDay(data.sim_day);
         if (data.analytics) {
@@ -73,5 +87,5 @@ export function useWebSocket(): WebSocketState {
     };
   }, [connect]);
 
-  return { assetsRef, trailsRef, analytics, simTime, simDay, connected };
+  return { assetsRef, trailsRef, cabsRef, analytics, simTime, simDay, connected };
 }

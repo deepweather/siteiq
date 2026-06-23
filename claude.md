@@ -630,9 +630,358 @@ debt items 33–38 remain open.
 ### Architectural debt (still open)
 
 33. **Camera feeds are disconnected from simulation** — the core coherence problem. See architecture section above. The `SiteStateSource` Protocol seam already supports a future `LiveSource` that would replace the simulation engine with calibrated YOLO detections projected onto the 2D map.
-34. **Per-org custom projects.** Each org now has its own `SimulationEngine` (see registry above) but the engines still pick from the 3 shared `PROJECT_TEMPLATES`. A future `org_projects` table would let users persist custom projects.
+34. ~~**Per-org custom projects.**~~ Closed in the Editor + Multi-Level rebuild. See "Project editor + multi-level + Tiefbau" below.
 35. **No 2FA UI yet.** The `users.totp_secret` column exists; the UI is intentionally hidden behind a future feature flag.
 36. **No billing.** `orgs.plan` exists (`trial|pro|enterprise`) but Stripe integration is a separate plan.
+
+## Project editor + multi-level + Tiefbau (Editor & Multi-Level rebuild)
+
+Rebuild that introduces a canonical, content-addressed `ProjectDocument`,
+first-class multi-level support, the Tiefbau discipline, an iso "exploded
+floors" view, and a customer-facing drag-and-place project editor. Shipped
+in ten phases (Phase 0–Phase 9); the architecture below is the post-rebuild
+end state.
+
+### Design principles
+
+1. **One canonical document.** [backend/models/project_document.py](backend/models/project_document.py) defines a single `ProjectDocument` Pydantic model. It is the storage format, the API payload, the editor's state, and the simulation engine's input. The only transformation is `simulation.project_loader.build_engine_state(doc)` which materialises `(Site, list[Asset], dict[worker_id, WorkerInternals], list[Connection])`.
+2. **Content-addressed immutable versions.** Every save writes a new `project_versions` row whose PK is `sha256(canonical_json(document))`. `projects.current_version_id` is a single mutable FK — atomic swap, no draft/publish state machine.
+3. **Levels via discrete `level_id` + a connection graph.** Vertical transport is BFS on a tiny graph, not pathfinding in 3D space.
+4. **The seam is sacred.** `SiteStateSource` Protocol stays the contract. Multi-level methods (`levels`, `level_by_id`, `workers_in_level`, `connections`, `connections_from_level`) are additive; single-level consumers see L0 everywhere and behave unchanged.
+5. **Editor = thin reducer over the same Pydantic schema.** OCC via `If-Match: <version_id>`, no CRDTs.
+
+### Canonical schema (Phase 0)
+
+```python
+class Discipline(str, Enum):
+    HOCHBAU = "hochbau"      # above-ground building
+    TIEFBAU = "tiefbau"      # civil / underground
+    HYBRID  = "hybrid"
+
+class Phase(str, Enum):
+    EXCAVATION; SHORING; PILING; DRAINAGE      # Tiefbau additions
+    FOUNDATION; STRUCTURAL; MEP_ROUGHIN
+    CLOSEIN; FINISHES; PAVING; COMPLETE        # PAVING added
+
+class Level(BaseModel):
+    id: str           # "L0", "L-1", "L1"
+    name: str         # "EG", "UG1", "1. OG"
+    elevation_m: float
+    order: int
+
+class Position(BaseModel):
+    x: float
+    y: float
+    level_id: str = "L0"   # default keeps existing data compatible
+
+class Connection(BaseModel):
+    id: str
+    kind: Literal["stair", "elevator"]
+    nodes: list[ConnectionNode]   # (level_id, x, y)
+    cab_capacity: int = 6
+    cycle_time_s: float = 60.0
+    speed_m_per_s: float = 1.5
+    seconds_per_level_climb: float = 20.0  # stairs only
+
+class ProjectDocument(BaseModel):
+    schema_version: int = 1
+    slug, name, description, type, discipline
+    width, height, start_day
+    levels: list[Level]
+    zones: list[Zone]              # carries level_id
+    facilities: list[FacilitySpec] # carries level_id
+    equipment: list[EquipmentSpec] # carries level_id
+    materials: list[MaterialSpec]  # carries level_id
+    connections: list[Connection]
+    schedule: list[ScheduleEntry]
+    worker_seeds: list[WorkerSeed] # per (zone_id, trade) → count
+
+    def content_hash(self) -> str:
+        return sha256(canonical_json(self)).hexdigest()
+```
+
+The 3 hardcoded templates were converted to JSON seed files under
+`backend/seeds/projects/*.json` (Phase 0); the in-Python
+`PROJECT_TEMPLATES` dict is now a thin lazy view that loads from disk.
+
+### Persistence (Phase 1)
+
+Alembic migration `0003_projects` adds:
+
+- `projects(id, org_id, slug, name, description, type, discipline, visibility, status, current_version_id, ...)` — top-level row, `org_id=NULL` for public templates.
+- `project_versions(id, project_id, parent_version_id, document JSONB, message, created_by_user_id, created_at)` — immutable. `id` is the SHA-256 content hash.
+- `orgs.active_project_version_id` — pointer at the version the org's simulation runs on.
+
+[backend/db/project_repository.py](backend/db/project_repository.py) is the only place that translates between `ProjectDocument` and DB rows. `save_version(project_id, doc, parent_version_id, ...)` raises `OptimisticLockError` if `parent_version_id` no longer matches the project's current pointer, which the router surfaces as a 409 `version_conflict`.
+
+[backend/seeds/importer.py](backend/seeds/importer.py) imports every bundled seed as a public-template row at app startup. Idempotent via content hash: identical seeds dedupe; edited seeds bump the version.
+
+[backend/state/registry.py](backend/state/registry.py)'s `for_org_at_version(org_id, document, version_id)` rebuilds an org's engine on version drift. The seed-slug path (`for_org`) still works for the dashboard's stock-project switcher.
+
+### Project router (Phase 1)
+
+All routes wrapped in `Depends(get_current_org)` + `require_role(Role.ADMIN)` for writes.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/projects` | GET | List org-owned + public-template projects |
+| `/api/projects` | POST | Create new draft (returns full document) |
+| `/api/projects/{id}` | GET | Full document, version id, visibility, ownership |
+| `/api/projects/{id}` | PUT | Save new version. `If-Match: <version_id>` required for OCC. Validation errors surface as `400 {code, message, field}`. |
+| `/api/projects/{id}` | DELETE | Soft via cascade |
+| `/api/projects/{id}/activate` | POST | Pin org's simulation to this project/version |
+| `/api/projects/{id}/validate` | POST | Dry-run validation; live editor feedback |
+
+[backend/api/routes.py](backend/api/routes.py) also gained `/api/site/load-seed {slug}` (Phase 1) — the legacy slug-based load endpoint, kept for the dashboard's stock-project switcher.
+
+Every mutating endpoint writes an `audit_events` row:
+`project.created`, `project.updated`, `project.deleted`, `project.activated`.
+
+### Multi-level simulation core (Phase 2)
+
+[backend/simulation/engine.py](backend/simulation/engine.py) gained:
+
+- `_facilities_by_subtype_level: dict[(subtype, level_id), list[Asset]]` — same-level toilet lookup is O(1).
+- `_connections_by_level: dict[level_id, list[Connection]]` — fast BFS frontier.
+- `_level_by_id` — Protocol-required lookup.
+- `workers_in_level(level_id)` — computed on demand (workers move between levels mid-sim).
+
+[backend/simulation/worker_behavior.py](backend/simulation/worker_behavior.py)'s `_find_nearest_facility` now takes an implicit `worker.position.level_id` filter: prefers a same-level facility, falls back to a cross-level one only when none exists on the worker's current floor.
+
+### Cab-tracked vertical transport (Phase 3)
+
+[backend/simulation/vertical_transport.py](backend/simulation/vertical_transport.py) implements one `CabState` per elevator `Connection`:
+
+- `current_level_id`, `direction (+1/-1/0)`, `passengers: list[(worker_id, target_level_id)]`, `queue_per_level: dict[level_id, deque[worker_id]]`, `door_open_remaining_s`.
+- `tick_cab(cab, dt_sim, on_alight, on_board)` advances the cab, dispatching:
+  - `on_alight(worker_id, level_id)` when a passenger reaches their target.
+  - `on_board(worker_id, level_id) -> target_level_id` when a queued worker enters.
+
+Long sim ticks (the sim runs at up to 20× real-time, so a single tick can span seconds-of-elevator-time) loop through multiple floor stops so cab position stays consistent with worker movement.
+
+Worker FSM additions:
+
+- `WorkerState.WALKING_TO_VERTICAL` — walk to the stair/elevator anchor on the current level.
+- `WorkerState.TRAVERSING_VERTICAL` — for stairs, count down `seconds_per_level_climb`; for elevators, sit in the queue / on the cab until the callback lands the worker on the destination level.
+- `_begin_vertical_route(worker, internals, engine, final_destination)` — BFS over the connection graph; if the destination is on a different level, sets the FSM to WALKING_TO_VERTICAL and stashes the cross-level target on `WorkerInternals.cross_level_destination`.
+
+`WorkerInternals` gained `target_level_id`, `cross_level_destination`, `vertical_connection_id`, `vertical_queue_enter_time`, `time_in_vertical_transport` (reset daily).
+
+**Phase 3 microbench gate**: 6 cabs × 250 workers × 6 levels averages well under 5 ms/tick. Locked in [backend/tests/test_vertical_transport.py](backend/tests/test_vertical_transport.py)::`test_tick_under_5ms_with_six_cabs_and_workers`.
+
+### Per-level analytics + vertical-transport optimizer (Phase 4)
+
+[backend/analytics/vertical_metrics.py](backend/analytics/vertical_metrics.py)'s `compute_vertical_metrics(source)` returns:
+
+- Per-worker accumulated `time_in_vertical_transport` extrapolated to a full day → `waste_daily` (in €).
+- Per-cab snapshot: `queued_now`, `riding_now`, `saturation`, `longest_wait_s`.
+
+`WasteSummary` gained `vertical_transport_daily` + `_monthly`. The WasteReport UI only renders the row when the value is > 0 (single-floor sites stay clean).
+
+[backend/optimization/vertical_transport_optimizer.py](backend/optimization/vertical_transport_optimizer.py) fires on either:
+- instantaneous saturation ≥ 60% or longest queue wait ≥ 60 s, **or**
+- cumulative daily waste per cab ≥ €5/day.
+
+Recommendation: "Add a second cab next to {connection_id}", estimated savings = avg_daily_per_cab / 2.
+
+[backend/optimization/facility_placement.py](backend/optimization/facility_placement.py) now runs k-means **per level** — toilets can't physically move across floors, so each level's toilets cluster on that level's worker centroids only.
+
+### Tiefbau as first-class (Phase 5)
+
+[backend/simulation/tiefbau_behavior.py](backend/simulation/tiefbau_behavior.py):
+
+- `update_tiefbau_equipment(asset, dt_sim, engine)` — dewatering pumps run 80% / 20% duty cycle; sheet piles stay permanently OPERATING.
+- `compute_shoring_compliance(source)` — per-EXCAVATION-zone score: 1.0 if a sheet pile is within `SHORING_INFLUENCE_RADIUS_M = 25` of the zone's centre, 0.0 otherwise. Surfaces the "uncovered cut" moment for the demo.
+
+New asset subtypes: `sheet_pile`, `dewatering_pump`. Engine dispatch in `_tick()` routes these subtypes to `update_tiefbau_equipment` instead of the standard `update_equipment`.
+
+New seed: `backend/seeds/projects/munich-sewer.json` (Kanalsanierung Lindwurmstraße). 5 linear excavation segments, 5 sheet piles, 2 dewatering pumps, the new Tiefbau phases (`SHORING`, `EXCAVATION`, `DRAINAGE`, `PAVING`).
+
+### Renderer multi-level (Phase 6)
+
+[frontend/src/components/SiteMap/LevelSwitcher.tsx](frontend/src/components/SiteMap/LevelSwitcher.tsx) — vertical strip on the right of the canvas, top-to-bottom by `order` descending. Renders nothing on single-floor projects.
+
+`SiteMap.tsx` now manages `activeLevel` state, filters zones (`zone.level_id === activeLevel`) and assets (`a.lvl === activeLevel`) before passing to `renderer.ts`. The runtime renderer itself is untouched — adding 768 LOC of branching to `renderer.ts` would have violated the "boring refactor" rule.
+
+WebSocket payload: every asset broadcast dict carries `lvl` (the asset's current `position.level_id`). `/api/site` includes `levels`, `connections`, `discipline`.
+
+### 2.5D iso exploded compositor (Phase 7)
+
+[frontend/src/components/SiteMap/IsoRenderer.ts](frontend/src/components/SiteMap/IsoRenderer.ts) — separate compositor that renders each level to an `OffscreenCanvas` via the existing `renderFrame`, then stacks them at a 30°-ish isometric angle on the parent canvas.
+
+- One `LevelSlab` per level, cached with a dirty-hash (per-level asset positions + render flags). Only redraws slabs that changed since the last frame.
+- Single-floor sites short-circuit to the regular `renderFrame` — zero cost when iso is off.
+- New "Iso View" toggle in the SiteMap toolbar, only visible on multi-level projects.
+- `resetIsoSlabs()` clears the cache on project switch.
+
+### Editor GUI (Phase 8)
+
+Routes:
+
+- `/app/projects` — list of org-owned + public-template projects, with "Edit / Activate / Duplicate" actions.
+- `/app/projects/:id/edit` — the editor.
+
+Components in `frontend/src/components/editor/`:
+
+- `ToolPalette.tsx` — categorised tool buttons (Zone / Facility / Vertical / Equipment / Tiefbau).
+- `LevelManager.tsx` — add/rename/remove levels; L0 is protected.
+- `PropertiesPanel.tsx` — context-sensitive editor for the currently-selected zone / facility / equipment / material / connection. Worker seeds are edited inside the zone view.
+- `EditorCanvas.tsx` — focused 2D drawing for the editor mode (separate from the runtime renderer). Click-to-select in select mode; click-to-place when a placement tool is active.
+- `ValidationOverlay.tsx` — surfaces errors / warnings from `POST /api/projects/{id}/validate`.
+
+State management via [frontend/src/hooks/useProjectDraft.ts](frontend/src/hooks/useProjectDraft.ts):
+
+- `useReducer` over `{ current, past, future, savedVersionId }` for instant undo/redo.
+- Autosave every 5 s if dirty, posting `PUT /api/projects/{id}` with `If-Match: <savedVersionId>`. Conflict → sets `conflict=true` (UI shows "⚠ conflict — reload").
+- Debounced live validation (800 ms) → `setIssues`.
+
+Activate from the editor header → `POST /api/projects/{id}/activate` → navigate back to the dashboard. The next `get_source` call detects the version drift and rebuilds the engine on the new document.
+
+### Editor v2 (preview / Gantt / floorplan / grid)
+
+Four post-Phase-8 features that were promised in the original 10-phase
+plan and are now in. None mutate the existing seam — every change lives
+in additive routes, new tables, or new components.
+
+**Preview Run.** `POST /api/projects/{id}/preview` runs a transient
+`SimulationEngine` against a draft document, ticks `ticks` times
+(default 240 ≈ 2 sim-hours, max 1200), then returns the snapshot,
+`compute_waste_summary` output, and the recommendation list — all in
+one synchronous response. The transient engine is built outside
+`SourceRegistry`, so the org's live simulation is never touched. Reject
+documents whose `validate_document` returns any `severity="error"`
+issue. Implementation in [backend/api/projects.py](backend/api/projects.py)
+(`preview_project` handler, ~70 LOC) + [frontend/src/components/editor/PreviewRunPanel.tsx](frontend/src/components/editor/PreviewRunPanel.tsx)
+(non-modal sidebar with daily/monthly waste + top 5 recommendations,
+auto-dismisses when the draft document mutates).
+
+**Snap-to-grid in the editor canvas.** [frontend/src/components/editor/EditorCanvas.tsx](frontend/src/components/editor/EditorCanvas.tsx)
+gained a `gridSize` state (`0 | 1 | 5 | 10` meters; default 1 m,
+persisted to `localStorage` under `siteiq.editor.grid_size`), a 4-pill
+toolbar above the canvas, a dot-grid render at `gridSize`-meter spacing
+(α=0.15, drawn under everything), and snap rounding on the
+final committed position of every drag + every click-to-place. The 3 px
+click→drag threshold and coarse-grain undo (one `patch` per drag) are
+unchanged. `snapToGrid(value, gridSize)` is exported for tests.
+
+**Gantt schedule editor.** Right-column tabs in the editor toggle
+between "Properties" (default) and "Schedule". The schedule tab is
+[frontend/src/components/editor/ScheduleEditor.tsx](frontend/src/components/editor/ScheduleEditor.tsx)
+— one row per zone, ordered like `LevelManager`. Each row's track holds
+`ProjectScheduleEntry` blocks coloured via `PHASE_COLORS`. Drag a block
+horizontally → shifts `start_day` and `end_day` together; drag the left
+handle → only `start_day`; drag the right handle → only `end_day`. Snap
+is the 1-day grid (everything's rounded via `daysPerPx`). A "+ Phase"
+button per row opens an inline picker (`start_day = currentMax + 1`,
+`end_day = +30`). "×" / right-click deletes a block. One coarse-grain
+`patch` per drag, on mouseup, so undo/redo + autosave keep working.
+`PHASE_COLORS` + `PHASE_LABELS` in [frontend/src/utils/colors.ts](frontend/src/utils/colors.ts)
+were extended with the four missing Tiefbau values (`SHORING`,
+`PILING`, `DRAINAGE`, `PAVING`).
+
+**Background floor-plan upload.** A new `project_assets` table (Alembic
+`0004_project_assets`) stores binary blobs (`id`, `project_id` FK
+cascade, `kind="level_background"`, `content_type`, `data` LargeBinary,
+`content_hash` SHA-256). Routes live in
+[backend/api/project_assets.py](backend/api/project_assets.py):
+- `POST /api/projects/{id}/levels/{level_id}/background` — multipart
+  upload. Accepts `image/png|jpeg|webp` only, capped at 2 MiB. Inserts
+  the blob row + writes a NEW project version with `Level.background_image_url`
+  set on the matching level. `If-Match` is honoured so OCC still works.
+- `GET /api/projects/{id}/assets/{asset_id}` — serves the bytes with
+  `Cache-Control: public, max-age=31536000, immutable` and the content
+  hash as `ETag` (the body never changes for a given asset_id).
+- `DELETE /api/projects/{id}/levels/{level_id}/background` — strips
+  the url + drops the asset row in one transaction.
+
+Frontend: [LevelManager.tsx](frontend/src/components/editor/LevelManager.tsx)
+gained a per-row "📐" button → hidden `<input type="file" accept="image/*">`.
+On select, the file uploads, the editor refetches the project, and the
+draft applies the fresh detail via the new
+`useProjectDraft.applyServerUpdate(detail)` callback (which clears
+undo/redo because the new version is the new ground truth).
+
+Render — `EditorCanvas.tsx` and `SiteMap.tsx` both grew a per-mount
+image cache keyed by absolute URL. When the active level has a
+`background_image_url`, the canvas calls `ctx.drawImage` once before
+the dashed site bounds (editor) or before `renderFrame` (runtime).
+`renderer.ts` stays untouched (Phase-6 lock-in rule); since it begins
+its draw with an opaque `#f0ede8` full-canvas `fillRect` and a
+`#d4c9a8` site-area `fillRect` inside `drawSiteGround`, the runtime
+SiteMap path temporarily intercepts those two specific `ctx.fillRect`
+calls (`fillStyle === '#f0ede8' || '#d4c9a8'`) so the floor plan
+survives underneath the zones / workers / trails. The intercept is
+restored before the cab overlay runs. The editor canvas hits the same
+`ctx.drawImage` path but doesn't need the intercept (it owns its full
+paint pipeline). On the editor side the grid dots also auto-step up
+(1m → 2m → 4m → 8m) until they reach ≥ 6 CSS pixels of separation,
+keeping the visual grid readable at small scales; the snap step
+remains whatever the user picked.
+
+Audit events emitted:
+- `project.preview` — `{project_id, version_hash, ticks}`
+- `project.background.uploaded` — `{project_id, level_id, asset_id, content_hash, to_version}`
+- `project.background.deleted` — `{project_id, level_id, asset_id}`
+
+New dependency: `python-multipart` (FastAPI's required parser for any
+`multipart/form-data` route — there's no in-tree alternative without
+writing a custom parser).
+
+Closes audit items #8–#11 (Preview run, Gantt editor, background
+upload, snap-to-grid) — the four "Promised editor features that don't
+exist" subsection entries from the prior revision.
+
+### API route → frontend mapping (post-rebuild additions)
+
+| Backend route | Method | Frontend caller |
+|--------------|--------|-----------------|
+| `/api/projects` | GET | `ProjectListPage`, `TopBar` |
+| `/api/projects` | POST | `ProjectListPage` (Create / Duplicate) |
+| `/api/projects/{id}` | GET | `useProjectDraft` |
+| `/api/projects/{id}` | PUT | `useProjectDraft` (autosave, `If-Match`) |
+| `/api/projects/{id}` | DELETE | _no UI yet, exposed for completeness_ |
+| `/api/projects/{id}/activate` | POST | `ProjectListPage`, `ProjectEditorPage` (header) |
+| `/api/projects/{id}/validate` | POST | `useProjectDraft` (debounced) |
+| `/api/projects/{id}/preview` | POST | `PreviewRunPanel` (Editor v2) |
+| `/api/projects/{id}/levels/{level_id}/background` | POST | `LevelManager` (📐 button) |
+| `/api/projects/{id}/levels/{level_id}/background` | DELETE | `LevelManager` (clr) |
+| `/api/projects/{id}/assets/{asset_id}` | GET | `EditorCanvas` + `SiteMap` background draw |
+| `/api/site/load-seed` | POST | `TopBar.handleProjectSelect` (legacy stock-project switcher) |
+
+### Test budget (post-rebuild)
+
+| Phase | Backend new tests | Frontend new tests |
+|-------|---|---|
+| Phase 0 schema | 13 | — |
+| Phase 1 persistence | 10 | — |
+| Phase 2 multi-level core | 9 | — |
+| Phase 3 vertical transport | 7 | — |
+| Phase 4 analytics + optimizer | 9 | — |
+| Phase 5 Tiefbau | 9 | — |
+| Phase 6 renderer levels | — | 5 (LevelSwitcher) |
+| Phase 7 iso view | — | covered by Phase-8 editor tests |
+| Phase 8 editor | — | 6 (ToolPalette, LevelManager) |
+| Editor v2 preview | 8 | 5 (PreviewRunPanel) |
+| Editor v2 snap-to-grid | — | 8 (EditorCanvas) |
+| Editor v2 Gantt | — | 8 (ScheduleEditor) |
+| Editor v2 floorplan | 9 | 3 (LevelManager) |
+| **Totals before / after** | **192 → 284** | **52 → 99** |
+
+End-to-end smoke verified via the browser MCP (auth → editor → preview
+panel → snap pills → schedule drag → background upload → activate →
+dashboard SiteMap renders the floor plan under the simulation overlay).
+
+Microbench gates locked in:
+
+- `test_tick_under_5ms_at_full_load` (Phase 0) — 50 ticks of `isar-bridge` average < 5 ms.
+- `test_tick_under_5ms_with_six_cabs_and_workers` (Phase 3) — 6 cabs × 250 workers stays in the same budget.
+
+### Closed debt (Editor & Multi-Level rebuild)
+
+- ~~Per-org custom projects (debt #34)~~ — `org_projects` is now `projects` + immutable `project_versions`. Editor lets owners + admins build their own sites end-to-end.
+- ~~Tiefbau wasn't a first-class discipline~~ — `Discipline` enum, expanded `Phase`, sheet-pile + dewatering-pump subtypes, slope-stability KPI, Munich seed.
+- ~~Single-floor assumption baked into every layer~~ — `Level` + `Position.level_id` + per-level indexes + vertical-transport FSM + per-level optimizers + level-switching renderer + iso exploded view.
+- ~~Promised editor features that don't exist (#8–#11)~~ — Preview Run, Gantt schedule editor, background floor-plan upload, snap-to-grid. See "Editor v2" subsection above.
 
 ### Resolved in 2026-06-21
 

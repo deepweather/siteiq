@@ -1,0 +1,357 @@
+{
+  "connections": [],
+  "description": "12-story office tower with 2 wings, 18,000m² GFA. Open site with good access but poor facility placement.",
+  "discipline": "hybrid",
+  "equipment": [
+    {
+      "id": "crane-1",
+      "level_id": "L0",
+      "state": "operating",
+      "subtype": "tower_crane",
+      "x": 120.0,
+      "y": 55.0
+    },
+    {
+      "id": "crane-2",
+      "level_id": "L0",
+      "state": "idle",
+      "subtype": "tower_crane",
+      "x": 200.0,
+      "y": 55.0
+    },
+    {
+      "id": "pump-1",
+      "level_id": "L0",
+      "state": "idle",
+      "subtype": "concrete_pump",
+      "x": 55.0,
+      "y": 195.0
+    },
+    {
+      "id": "excavator-1",
+      "level_id": "L0",
+      "state": "operating",
+      "subtype": "excavator",
+      "x": 260.0,
+      "y": 80.0
+    }
+  ],
+  "facilities": [
+    {
+      "id": "toilet-1",
+      "level_id": "L0",
+      "subtype": "toilet",
+      "x": 290.0,
+      "y": 10.0
+    },
+    {
+      "id": "toilet-2",
+      "level_id": "L0",
+      "subtype": "toilet",
+      "x": 290.0,
+      "y": 190.0
+    },
+    {
+      "id": "toilet-3",
+      "level_id": "L0",
+      "subtype": "toilet",
+      "x": 10.0,
+      "y": 190.0
+    },
+    {
+      "id": "breakroom",
+      "level_id": "L0",
+      "subtype": "breakroom",
+      "x": 10.0,
+      "y": 100.0
+    },
+    {
+      "id": "office",
+      "level_id": "L0",
+      "subtype": "office",
+      "x": 10.0,
+      "y": 10.0
+    },
+    {
+      "id": "toolcrib",
+      "level_id": "L0",
+      "subtype": "toolcrib",
+      "x": 150.0,
+      "y": 195.0
+    }
+  ],
+  "height": 200.0,
+  "levels": [
+    {
+      "background_image_url": null,
+      "elevation_m": 0.0,
+      "id": "L0",
+      "name": "EG",
+      "order": 0
+    }
+  ],
+  "materials": [
+    {
+      "id": "mat-rebar",
+      "level_id": "L0",
+      "needed_in": "zone-b",
+      "subtype": "rebar",
+      "x": 145.0,
+      "y": 195.0
+    },
+    {
+      "id": "mat-conduit",
+      "level_id": "L0",
+      "needed_in": "zone-c",
+      "subtype": "conduit",
+      "x": 155.0,
+      "y": 195.0
+    },
+    {
+      "id": "mat-drywall",
+      "level_id": "L0",
+      "needed_in": "zone-d",
+      "subtype": "drywall",
+      "x": 135.0,
+      "y": 195.0
+    },
+    {
+      "id": "mat-concrete",
+      "level_id": "L0",
+      "needed_in": "zone-e",
+      "subtype": "concrete",
+      "x": 165.0,
+      "y": 195.0
+    },
+    {
+      "id": "mat-glass",
+      "level_id": "L0",
+      "needed_in": "zone-a",
+      "subtype": "drywall",
+      "x": 175.0,
+      "y": 195.0
+    }
+  ],
+  "name": "Bürocampus Europaviertel — Frankfurt",
+  "schedule": [
+    {
+      "end_day": 40,
+      "phase": "foundation",
+      "start_day": 1,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-e"
+    },
+    {
+      "end_day": 70,
+      "phase": "structural",
+      "start_day": 41,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-e"
+    },
+    {
+      "end_day": 55,
+      "phase": "structural",
+      "start_day": 20,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-d"
+    },
+    {
+      "end_day": 100,
+      "phase": "finishes",
+      "start_day": 56,
+      "trades_required": [
+        "finishing"
+      ],
+      "zone_id": "zone-d"
+    },
+    {
+      "end_day": 90,
+      "phase": "structural",
+      "start_day": 30,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-b"
+    },
+    {
+      "end_day": 120,
+      "phase": "mep_roughin",
+      "start_day": 91,
+      "trades_required": [
+        "mep"
+      ],
+      "zone_id": "zone-b"
+    },
+    {
+      "end_day": 95,
+      "phase": "mep_roughin",
+      "start_day": 60,
+      "trades_required": [
+        "mep"
+      ],
+      "zone_id": "zone-c"
+    },
+    {
+      "end_day": 130,
+      "phase": "finishes",
+      "start_day": 96,
+      "trades_required": [
+        "finishing"
+      ],
+      "zone_id": "zone-c"
+    },
+    {
+      "end_day": 100,
+      "phase": "closein",
+      "start_day": 50,
+      "trades_required": [
+        "general",
+        "mep"
+      ],
+      "zone_id": "zone-a"
+    },
+    {
+      "end_day": 140,
+      "phase": "finishes",
+      "start_day": 101,
+      "trades_required": [
+        "finishing"
+      ],
+      "zone_id": "zone-a"
+    },
+    {
+      "end_day": 110,
+      "phase": "excavation",
+      "start_day": 70,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-f"
+    },
+    {
+      "end_day": 140,
+      "phase": "foundation",
+      "start_day": 111,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-f"
+    }
+  ],
+  "schema_version": 1,
+  "slug": "europa-quarter",
+  "start_day": 82,
+  "type": "Commercial",
+  "width": 300.0,
+  "worker_seeds": [
+    {
+      "count": 10,
+      "trade": "general",
+      "zone_id": "zone-a"
+    },
+    {
+      "count": 6,
+      "trade": "mep",
+      "zone_id": "zone-a"
+    },
+    {
+      "count": 14,
+      "trade": "structural",
+      "zone_id": "zone-b"
+    },
+    {
+      "count": 8,
+      "trade": "mep",
+      "zone_id": "zone-c"
+    },
+    {
+      "count": 10,
+      "trade": "finishing",
+      "zone_id": "zone-d"
+    },
+    {
+      "count": 6,
+      "trade": "general",
+      "zone_id": "zone-e"
+    },
+    {
+      "count": 6,
+      "trade": "general",
+      "zone_id": "zone-f"
+    }
+  ],
+  "zones": [
+    {
+      "height": 70.0,
+      "id": "zone-a",
+      "label": "Turm Ost",
+      "level_id": "L0",
+      "phase": "closein",
+      "phase_progress": 0.45,
+      "width": 80.0,
+      "x": 30.0,
+      "y": 20.0
+    },
+    {
+      "height": 70.0,
+      "id": "zone-b",
+      "label": "Turm West",
+      "level_id": "L0",
+      "phase": "structural",
+      "phase_progress": 0.7,
+      "width": 80.0,
+      "x": 140.0,
+      "y": 20.0
+    },
+    {
+      "height": 45.0,
+      "id": "zone-c",
+      "label": "Lobby / Atrium",
+      "level_id": "L0",
+      "phase": "mep_roughin",
+      "phase_progress": 0.3,
+      "width": 60.0,
+      "x": 110.0,
+      "y": 95.0
+    },
+    {
+      "height": 70.0,
+      "id": "zone-d",
+      "label": "Tiefgarage P1",
+      "level_id": "L0",
+      "phase": "finishes",
+      "phase_progress": 0.6,
+      "width": 90.0,
+      "x": 15.0,
+      "y": 110.0
+    },
+    {
+      "height": 45.0,
+      "id": "zone-e",
+      "label": "Tiefgarage P2",
+      "level_id": "L0",
+      "phase": "foundation",
+      "phase_progress": 0.85,
+      "width": 90.0,
+      "x": 130.0,
+      "y": 145.0
+    },
+    {
+      "height": 120.0,
+      "id": "zone-f",
+      "label": "Außenanlagen",
+      "level_id": "L0",
+      "phase": "excavation",
+      "phase_progress": 0.25,
+      "width": 55.0,
+      "x": 230.0,
+      "y": 20.0
+    }
+  ]
+}

@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -97,7 +98,15 @@ class Org(Base):
     # The PROJECT_TEMPLATES key the org's simulation engine should boot
     # with. Persists across backend restarts (the registry was per-app
     # before, so a restart reset every org to the default project).
+    # Phase 1 added `active_project_version_id`; this column is kept as
+    # the user-friendly slug ("westhafen") for compat with the existing
+    # restore path. The registry resolves slug→version on boot.
     active_project_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # FK-ish: not a real FK because the project may belong to another
+    # org (public templates) and we don't want cross-tenant FKs.
+    active_project_version_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )
@@ -231,6 +240,124 @@ class AuditEvent(Base):
     )
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class ProjectVisibility(str, enum.Enum):
+    PRIVATE = "private"            # only this org sees it
+    ORG = "org"                    # shared within this org (same as private today)
+    PUBLIC_TEMPLATE = "public_template"  # readable across orgs (used by stock seeds)
+
+
+class ProjectStatus(str, enum.Enum):
+    DRAFT = "draft"
+    ARCHIVED = "archived"
+
+
+class Project(Base):
+    """Top-level project record.
+
+    `current_version_id` is the mutable pointer at the immutable
+    `project_versions` history. Engines load by version id so a "swap
+    project for this org" is one atomic UPDATE on `orgs.active_project_id`
+    or `orgs.active_project_version_id` (added below).
+    """
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        Index("ix_projects_org_id", "org_id"),
+        UniqueConstraint("org_id", "slug", name="uq_projects_org_slug"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    org_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=True
+    )
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    type: Mapped[str] = mapped_column(String(64), nullable=False, default="Residential")
+    discipline: Mapped[str] = mapped_column(String(32), nullable=False, default="hochbau")
+    visibility: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=ProjectVisibility.PRIVATE.value
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=ProjectStatus.DRAFT.value
+    )
+    current_version_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class ProjectAsset(Base):
+    """Binary blob attached to a project — currently only level
+    background images (`kind = "level_background"`).
+
+    Stored in-DB rather than on the filesystem so the org-delete cascade
+    cleanly drops every blob and identical uploads dedupe naturally via
+    `content_hash`. The `data` column is `LargeBinary` (BYTEA on
+    Postgres, BLOB on SQLite) and is capped at 2 MB by the upload route.
+    """
+
+    __tablename__ = "project_assets"
+    __table_args__ = (
+        Index("ix_project_assets_project_id", "project_id"),
+        Index("ix_project_assets_content_hash", "content_hash"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class ProjectVersion(Base):
+    """Immutable snapshot of a ProjectDocument.
+
+    The PK is the SHA-256 content hash of the canonical JSON, so two
+    identical edits dedupe naturally. The `document` column stores the
+    canonical JSON. Phase-1 implementation uses SQLAlchemy `JSON` for
+    portability between SQLite and Postgres; in prod this lands as
+    JSONB on Postgres automatically.
+    """
+
+    __tablename__ = "project_versions"
+    __table_args__ = (
+        Index("ix_project_versions_project_id_created_at", "project_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    parent_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    document: Mapped[dict] = mapped_column(JSON, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )

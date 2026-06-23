@@ -1,0 +1,70 @@
+{
+  "connections": [],
+  "description": "Underground sewer renewal in central Munich. Linear excavation along Lindwurmstraße with sheet piles, dewatering pumps, and continuous shoring. Pure Tiefbau project.",
+  "discipline": "tiefbau",
+  "equipment": [
+    {"id": "sheet-pile-a", "level_id": "L0", "state": "operating", "subtype": "sheet_pile", "x": 30.0, "y": 35.0},
+    {"id": "sheet-pile-b", "level_id": "L0", "state": "operating", "subtype": "sheet_pile", "x": 80.0, "y": 35.0},
+    {"id": "sheet-pile-c", "level_id": "L0", "state": "operating", "subtype": "sheet_pile", "x": 130.0, "y": 35.0},
+    {"id": "sheet-pile-d", "level_id": "L0", "state": "operating", "subtype": "sheet_pile", "x": 180.0, "y": 35.0},
+    {"id": "sheet-pile-e", "level_id": "L0", "state": "operating", "subtype": "sheet_pile", "x": 230.0, "y": 35.0},
+    {"id": "excavator-1", "level_id": "L0", "state": "operating", "subtype": "excavator", "x": 60.0, "y": 30.0},
+    {"id": "excavator-2", "level_id": "L0", "state": "operating", "subtype": "excavator", "x": 200.0, "y": 30.0},
+    {"id": "pump-1", "level_id": "L0", "state": "operating", "subtype": "dewatering_pump", "x": 90.0, "y": 5.0},
+    {"id": "pump-2", "level_id": "L0", "state": "operating", "subtype": "dewatering_pump", "x": 190.0, "y": 5.0},
+    {"id": "crane-1", "level_id": "L0", "state": "idle", "subtype": "tower_crane", "x": 145.0, "y": 60.0}
+  ],
+  "facilities": [
+    {"id": "toilet-1", "level_id": "L0", "subtype": "toilet", "x": 5.0, "y": 5.0},
+    {"id": "toilet-2", "level_id": "L0", "subtype": "toilet", "x": 295.0, "y": 5.0},
+    {"id": "breakroom", "level_id": "L0", "subtype": "breakroom", "x": 145.0, "y": 5.0},
+    {"id": "office", "level_id": "L0", "subtype": "office", "x": 5.0, "y": 75.0},
+    {"id": "toolcrib", "level_id": "L0", "subtype": "toolcrib", "x": 295.0, "y": 75.0}
+  ],
+  "height": 80.0,
+  "levels": [
+    {"background_image_url": null, "elevation_m": 0.0, "id": "L0", "name": "Strasse", "order": 0},
+    {"background_image_url": null, "elevation_m": -4.0, "id": "L-1", "name": "Grabensohle", "order": -1}
+  ],
+  "materials": [
+    {"id": "mat-pipe-a", "level_id": "L0", "needed_in": "zone-a", "subtype": "concrete", "x": 60.0, "y": 70.0},
+    {"id": "mat-pipe-b", "level_id": "L0", "needed_in": "zone-b", "subtype": "concrete", "x": 110.0, "y": 70.0},
+    {"id": "mat-pipe-c", "level_id": "L0", "needed_in": "zone-c", "subtype": "concrete", "x": 160.0, "y": 70.0},
+    {"id": "mat-pipe-d", "level_id": "L0", "needed_in": "zone-d", "subtype": "concrete", "x": 210.0, "y": 70.0},
+    {"id": "mat-pipe-e", "level_id": "L0", "needed_in": "zone-e", "subtype": "concrete", "x": 260.0, "y": 70.0}
+  ],
+  "name": "Kanalsanierung Lindwurmstraße — München",
+  "schedule": [
+    {"end_day": 30, "phase": "shoring", "start_day": 1, "trades_required": ["general"], "zone_id": "zone-a"},
+    {"end_day": 60, "phase": "excavation", "start_day": 31, "trades_required": ["general"], "zone_id": "zone-a"},
+    {"end_day": 90, "phase": "drainage", "start_day": 61, "trades_required": ["general"], "zone_id": "zone-a"},
+    {"end_day": 45, "phase": "shoring", "start_day": 15, "trades_required": ["general"], "zone_id": "zone-b"},
+    {"end_day": 75, "phase": "excavation", "start_day": 46, "trades_required": ["general"], "zone_id": "zone-b"},
+    {"end_day": 60, "phase": "shoring", "start_day": 30, "trades_required": ["general"], "zone_id": "zone-c"},
+    {"end_day": 90, "phase": "excavation", "start_day": 61, "trades_required": ["general"], "zone_id": "zone-c"},
+    {"end_day": 75, "phase": "shoring", "start_day": 45, "trades_required": ["general"], "zone_id": "zone-d"},
+    {"end_day": 105, "phase": "excavation", "start_day": 76, "trades_required": ["general"], "zone_id": "zone-d"},
+    {"end_day": 90, "phase": "shoring", "start_day": 60, "trades_required": ["general"], "zone_id": "zone-e"},
+    {"end_day": 120, "phase": "excavation", "start_day": 91, "trades_required": ["general"], "zone_id": "zone-e"},
+    {"end_day": 150, "phase": "paving", "start_day": 121, "trades_required": ["general"], "zone_id": "zone-e"}
+  ],
+  "schema_version": 1,
+  "slug": "munich-sewer",
+  "start_day": 65,
+  "type": "Infrastructure",
+  "width": 300.0,
+  "worker_seeds": [
+    {"count": 6, "trade": "general", "zone_id": "zone-a"},
+    {"count": 8, "trade": "general", "zone_id": "zone-b"},
+    {"count": 7, "trade": "general", "zone_id": "zone-c"},
+    {"count": 6, "trade": "general", "zone_id": "zone-d"},
+    {"count": 5, "trade": "general", "zone_id": "zone-e"}
+  ],
+  "zones": [
+    {"height": 30.0, "id": "zone-a", "label": "Abschnitt A", "level_id": "L0", "phase": "drainage", "phase_progress": 0.6, "width": 50.0, "x": 10.0, "y": 25.0},
+    {"height": 30.0, "id": "zone-b", "label": "Abschnitt B", "level_id": "L0", "phase": "excavation", "phase_progress": 0.7, "width": 50.0, "x": 60.0, "y": 25.0},
+    {"height": 30.0, "id": "zone-c", "label": "Abschnitt C", "level_id": "L0", "phase": "excavation", "phase_progress": 0.4, "width": 50.0, "x": 110.0, "y": 25.0},
+    {"height": 30.0, "id": "zone-d", "label": "Abschnitt D", "level_id": "L0", "phase": "shoring", "phase_progress": 0.5, "width": 50.0, "x": 160.0, "y": 25.0},
+    {"height": 30.0, "id": "zone-e", "label": "Abschnitt E", "level_id": "L0", "phase": "shoring", "phase_progress": 0.2, "width": 50.0, "x": 210.0, "y": 25.0}
+  ]
+}

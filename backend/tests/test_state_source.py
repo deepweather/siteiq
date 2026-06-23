@@ -70,6 +70,38 @@ class FakeSource:
     def position_history_for(self, worker_id: str):
         return self._trails.get(worker_id, [])
 
+    # ── Phase-2 multi-level surface ──────────────────────────────────
+    #
+    # The fake source defaults to a single ground-floor level and no
+    # vertical connections. Real multi-level fake sources can override
+    # these in their own subclasses; the analytics / optimization layer
+    # doesn't depend on them.
+
+    @property
+    def levels(self):
+        from models.assets import DEFAULT_LEVEL_ID
+        from models.site import Level
+        return [Level(id=DEFAULT_LEVEL_ID, name="EG", elevation_m=0.0, order=0)]
+
+    def level_by_id(self, level_id: str):
+        for lv in self.levels:
+            if lv.id == level_id:
+                return lv
+        return None
+
+    def workers_in_level(self, level_id: str):
+        return [
+            a for a in self._assets
+            if a.type == "worker" and a.position.level_id == level_id
+        ]
+
+    @property
+    def connections(self):
+        return []
+
+    def connections_from_level(self, level_id: str):
+        return []
+
 
 def _make_realistic_fake() -> FakeSource:
     src = FakeSource()

@@ -17,7 +17,7 @@ import { useAuth } from '../lib/auth/AuthProvider';
 export default function Dashboard() {
   const nav = useNavigate();
   const { org } = useAuth();
-  const { assetsRef, trailsRef, analytics, simTime, simDay, connected } = useWebSocket();
+  const { assetsRef, trailsRef, cabsRef, analytics, simTime, simDay, connected } = useWebSocket();
   useConnectionToast(connected);
   const { site, loading, reload } = useSimulation();
   const { currentWaste, baselineWaste, savings, resetBaseline } = useAnalytics(analytics);
@@ -122,10 +122,13 @@ export default function Dashboard() {
           siteHeight={site.height}
           assetsRef={assetsRef}
           trailsRef={trailsRef}
+          cabsRef={cabsRef}
           recommendations={recommendations}
           selectedAssetId={selectedAssetId}
           onAssetSelect={handleAssetSelect}
           recentApply={recentApply}
+          levels={site.levels}
+          connections={site.connections}
         />
         <RightPanel
           waste={currentWaste}

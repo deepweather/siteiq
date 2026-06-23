@@ -15,6 +15,7 @@ import {
   fetchRecommendations,
   fetchAssetDetail,
   fetchCameras,
+  fetchHeatmap,
   loadProject,
   applyRecommendation,
   applyAllRecommendations,
@@ -155,6 +156,34 @@ describe('api.ts error handling (bug #3)', () => {
     const urls = fetchSpy.mock.calls.map((c) => c[0]);
     expect(urls).toContain(`${API_BASE}/api/projects`);
     expect(urls).toContain(`${API_BASE}/api/cameras`);
-    expect(urls).toContain(`${API_BASE}/api/projects/westhafen/load`);
+    // Phase 1 renamed the legacy slug-based load endpoint.
+    expect(urls).toContain(`${API_BASE}/api/site/load-seed`);
+  });
+
+  it('fetchHeatmap with no arg hits the pooled endpoint', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      okJson({ cell_size: 4, site_width: 100, site_height: 80, max_count: 0, cells: [], level_id: null }),
+    );
+    await fetchHeatmap();
+    const urls = fetchSpy.mock.calls.map((c) => c[0]);
+    expect(urls).toEqual([`${API_BASE}/api/simulation/heatmap`]);
+  });
+
+  it('fetchHeatmap(levelId) passes the level_id query param', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      okJson({ cell_size: 4, site_width: 100, site_height: 80, max_count: 0, cells: [], level_id: 'L1' }),
+    );
+    await fetchHeatmap('L1');
+    const urls = fetchSpy.mock.calls.map((c) => c[0]);
+    expect(urls).toEqual([`${API_BASE}/api/simulation/heatmap?level_id=L1`]);
+  });
+
+  it('fetchHeatmap URL-encodes the level_id', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      okJson({ cell_size: 4, site_width: 100, site_height: 80, max_count: 0, cells: [] }),
+    );
+    await fetchHeatmap('L-1');
+    const urls = fetchSpy.mock.calls.map((c) => c[0]);
+    expect(urls[0]).toBe(`${API_BASE}/api/simulation/heatmap?level_id=L-1`);
   });
 });

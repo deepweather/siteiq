@@ -19,9 +19,30 @@ def _weighted_centroid(points_weights: list[tuple[float, float, float]]) -> tupl
 
 
 def optimize_toilet_placement(source: SiteStateSource) -> list[Recommendation]:
-    recommendations = []
+    """Recommend toilet relocations.
+
+    Multi-level (Phase 4): toilets can't be physically moved across
+    levels. Run k-means independently per level, restricting each
+    toilet's candidate positions to the centroids of zones on the
+    SAME level. Single-level projects behave exactly as before
+    (every toilet is on L0 and is treated as one group).
+    """
+    out: list[Recommendation] = []
     toilets = [a for a in source.assets if a.type == "facility" and a.subtype == "toilet"]
-    zones = source.site.zones
+    if not toilets:
+        return out
+    levels = {t.position.level_id for t in toilets}
+    for level_id in sorted(levels):
+        level_toilets = [t for t in toilets if t.position.level_id == level_id]
+        level_zones = [z for z in source.site.zones if z.level_id == level_id]
+        if not level_zones:
+            continue
+        out.extend(_optimize_for_level(source, level_toilets, level_zones))
+    return out
+
+
+def _optimize_for_level(source: SiteStateSource, toilets, zones) -> list[Recommendation]:
+    recommendations: list[Recommendation] = []
 
     zone_data = []
     for z in zones:

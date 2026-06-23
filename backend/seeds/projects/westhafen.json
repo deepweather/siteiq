@@ -1,0 +1,292 @@
+{
+  "connections": [],
+  "description": "60-unit residential complex, 5 stories, underground parking. Tight urban site with constrained access.",
+  "discipline": "hybrid",
+  "equipment": [
+    {
+      "id": "crane-1",
+      "level_id": "L0",
+      "state": "operating",
+      "subtype": "tower_crane",
+      "x": 100.0,
+      "y": 80.0
+    },
+    {
+      "id": "pump-1",
+      "level_id": "L0",
+      "state": "idle",
+      "subtype": "concrete_pump",
+      "x": 50.0,
+      "y": 150.0
+    },
+    {
+      "id": "excavator-1",
+      "level_id": "L0",
+      "state": "operating",
+      "subtype": "excavator",
+      "x": 170.0,
+      "y": 120.0
+    }
+  ],
+  "facilities": [
+    {
+      "id": "toilet-1",
+      "level_id": "L0",
+      "subtype": "toilet",
+      "x": 230.0,
+      "y": 10.0
+    },
+    {
+      "id": "toilet-2",
+      "level_id": "L0",
+      "subtype": "toilet",
+      "x": 230.0,
+      "y": 150.0
+    },
+    {
+      "id": "breakroom",
+      "level_id": "L0",
+      "subtype": "breakroom",
+      "x": 5.0,
+      "y": 80.0
+    },
+    {
+      "id": "office",
+      "level_id": "L0",
+      "subtype": "office",
+      "x": 5.0,
+      "y": 5.0
+    },
+    {
+      "id": "toolcrib",
+      "level_id": "L0",
+      "subtype": "toolcrib",
+      "x": 5.0,
+      "y": 150.0
+    }
+  ],
+  "height": 160.0,
+  "levels": [
+    {
+      "background_image_url": null,
+      "elevation_m": 0.0,
+      "id": "L0",
+      "name": "EG",
+      "order": 0
+    }
+  ],
+  "materials": [
+    {
+      "id": "mat-rebar",
+      "level_id": "L0",
+      "needed_in": "zone-c",
+      "subtype": "rebar",
+      "x": 120.0,
+      "y": 155.0
+    },
+    {
+      "id": "mat-conduit",
+      "level_id": "L0",
+      "needed_in": "zone-b",
+      "subtype": "conduit",
+      "x": 125.0,
+      "y": 155.0
+    },
+    {
+      "id": "mat-drywall",
+      "level_id": "L0",
+      "needed_in": "zone-a",
+      "subtype": "drywall",
+      "x": 115.0,
+      "y": 155.0
+    },
+    {
+      "id": "mat-concrete",
+      "level_id": "L0",
+      "needed_in": "zone-d",
+      "subtype": "concrete",
+      "x": 130.0,
+      "y": 155.0
+    }
+  ],
+  "name": "Wohnanlage Westhafen — Berlin",
+  "schedule": [
+    {
+      "end_day": 30,
+      "phase": "excavation",
+      "start_day": 1,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-e"
+    },
+    {
+      "end_day": 55,
+      "phase": "foundation",
+      "start_day": 31,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-e"
+    },
+    {
+      "end_day": 50,
+      "phase": "foundation",
+      "start_day": 15,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-d"
+    },
+    {
+      "end_day": 80,
+      "phase": "structural",
+      "start_day": 51,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-d"
+    },
+    {
+      "end_day": 65,
+      "phase": "structural",
+      "start_day": 25,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-c"
+    },
+    {
+      "end_day": 90,
+      "phase": "mep_roughin",
+      "start_day": 66,
+      "trades_required": [
+        "mep"
+      ],
+      "zone_id": "zone-c"
+    },
+    {
+      "end_day": 70,
+      "phase": "mep_roughin",
+      "start_day": 35,
+      "trades_required": [
+        "mep"
+      ],
+      "zone_id": "zone-b"
+    },
+    {
+      "end_day": 95,
+      "phase": "closein",
+      "start_day": 71,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-b"
+    },
+    {
+      "end_day": 85,
+      "phase": "finishes",
+      "start_day": 40,
+      "trades_required": [
+        "finishing"
+      ],
+      "zone_id": "zone-a"
+    },
+    {
+      "end_day": 120,
+      "phase": "complete",
+      "start_day": 86,
+      "trades_required": [],
+      "zone_id": "zone-a"
+    }
+  ],
+  "schema_version": 1,
+  "slug": "westhafen",
+  "start_day": 47,
+  "type": "Residential",
+  "width": 240.0,
+  "worker_seeds": [
+    {
+      "count": 8,
+      "trade": "finishing",
+      "zone_id": "zone-a"
+    },
+    {
+      "count": 12,
+      "trade": "mep",
+      "zone_id": "zone-b"
+    },
+    {
+      "count": 15,
+      "trade": "structural",
+      "zone_id": "zone-c"
+    },
+    {
+      "count": 8,
+      "trade": "general",
+      "zone_id": "zone-d"
+    },
+    {
+      "count": 7,
+      "trade": "general",
+      "zone_id": "zone-e"
+    }
+  ],
+  "zones": [
+    {
+      "height": 60.0,
+      "id": "zone-a",
+      "label": "Block A",
+      "level_id": "L0",
+      "phase": "finishes",
+      "phase_progress": 0.35,
+      "width": 70.0,
+      "x": 10.0,
+      "y": 10.0
+    },
+    {
+      "height": 60.0,
+      "id": "zone-b",
+      "label": "Block B",
+      "level_id": "L0",
+      "phase": "mep_roughin",
+      "phase_progress": 0.55,
+      "width": 70.0,
+      "x": 100.0,
+      "y": 10.0
+    },
+    {
+      "height": 60.0,
+      "id": "zone-c",
+      "label": "Block C",
+      "level_id": "L0",
+      "phase": "structural",
+      "phase_progress": 0.65,
+      "width": 70.0,
+      "x": 55.0,
+      "y": 85.0
+    },
+    {
+      "height": 60.0,
+      "id": "zone-d",
+      "label": "Tiefgarage",
+      "level_id": "L0",
+      "phase": "foundation",
+      "phase_progress": 0.8,
+      "width": 40.0,
+      "x": 10.0,
+      "y": 85.0
+    },
+    {
+      "height": 60.0,
+      "id": "zone-e",
+      "label": "Außenanlagen",
+      "level_id": "L0",
+      "phase": "excavation",
+      "phase_progress": 0.4,
+      "width": 70.0,
+      "x": 140.0,
+      "y": 85.0
+    }
+  ]
+}

@@ -73,19 +73,23 @@ export async function getJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function postJson<T = unknown>(path: string, body?: unknown): Promise<T> {
-  return mutate<T>('POST', path, body);
+export async function postJson<T = unknown>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  return mutate<T>('POST', path, body, extraHeaders);
 }
 
-export async function patchJson<T = unknown>(path: string, body?: unknown): Promise<T> {
-  return mutate<T>('PATCH', path, body);
+export async function patchJson<T = unknown>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  return mutate<T>('PATCH', path, body, extraHeaders);
 }
 
-export async function deleteJson<T = unknown>(path: string, body?: unknown): Promise<T> {
-  return mutate<T>('DELETE', path, body);
+export async function putJson<T = unknown>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  return mutate<T>('PUT', path, body, extraHeaders);
 }
 
-async function mutate<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function deleteJson<T = unknown>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  return mutate<T>('DELETE', path, body, extraHeaders);
+}
+
+async function mutate<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
   const csrf = await ensureCsrf();
   const init: RequestInit = {
     method,
@@ -93,6 +97,7 @@ async function mutate<T>(method: string, path: string, body?: unknown): Promise<
     headers: {
       'X-CSRF-Token': csrf,
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(extraHeaders ?? {}),
     },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
@@ -234,19 +239,37 @@ export function fetchVersion(): Promise<VersionInfo> {
   return getJson<VersionInfo>('/api/version');
 }
 
+/** What the dashboard's TopBar consumes from `GET /api/projects`. The
+ *  full editor shape (visibility, ownership, version id) is available
+ *  via `services/projectsApi.ts`. */
 export interface ProjectSummary {
+  /** Backend UUID — used by the editor flow. */
   id: string;
+  /** Stable seed/template slug — used by the legacy load endpoint. */
+  slug: string;
   name: string;
   description: string;
   type: string;
 }
 
-export function fetchProjects(): Promise<ProjectSummary[]> {
-  return getJson<ProjectSummary[]>('/api/projects');
+export async function fetchProjects(): Promise<ProjectSummary[]> {
+  const raw = await getJson<ProjectSummary[]>('/api/projects');
+  // Defensive: backend may still return entries without `slug` for any
+  // future shape variations; fall back to the UUID id so loadProject
+  // doesn't get an undefined path segment.
+  return raw.map((p) => ({
+    id: p.id,
+    slug: p.slug ?? p.id,
+    name: p.name,
+    description: p.description,
+    type: p.type,
+  }));
 }
 
-export async function loadProject(id: string): Promise<void> {
-  await postJson(`/api/projects/${id}/load`);
+/** Switch the org's simulation to the seed-template with this slug.
+ *  The TopBar passes the slug, NOT the UUID. */
+export async function loadProject(slug: string): Promise<void> {
+  await postJson('/api/site/load-seed', { slug });
 }
 
 export interface PortfolioSite {
@@ -316,10 +339,14 @@ export interface HeatmapData {
   site_height: number;
   max_count: number;
   cells: [number, number, number][];
+  /** Echoed back: which level's traffic this snapshot covers, or null
+   *  for the pooled-across-all-levels view. */
+  level_id?: string | null;
 }
 
-export function fetchHeatmap(): Promise<HeatmapData> {
-  return getJson<HeatmapData>('/api/simulation/heatmap');
+export function fetchHeatmap(levelId?: string | null): Promise<HeatmapData> {
+  const q = levelId ? `?level_id=${encodeURIComponent(levelId)}` : '';
+  return getJson<HeatmapData>(`/api/simulation/heatmap${q}`);
 }
 
 export function fetchAssetDetail(id: string): Promise<AssetDetail> {

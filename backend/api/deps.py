@@ -162,21 +162,55 @@ def require_role(min_role: Role):
 # ---------------------------------------------------------------------------
 
 
-def get_source(
+async def get_source(
     request: Request,
     org: Org = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
 ) -> SiteStateSource:
-    """Return the org's engine. On first access, seeds the engine with
-    `org.active_project_id` if set — this is how the persisted project
-    survives backend restarts."""
-    return _get_registry(request).for_org(org.id, project_id=org.active_project_id)
+    """Return the org's engine.
+
+    Resolution order:
+      1. If `org.active_project_version_id` is set, load the corresponding
+         immutable `ProjectDocument` from the DB and ensure the engine
+         is pinned to it (re-keying the registry if the version drifted).
+      2. Otherwise fall back to the legacy slug-based seed path
+         (`org.active_project_id`).
+
+    This is the only place the editor / activate-version flow and the
+    legacy seed flow meet.
+    """
+    registry = _get_registry(request)
+
+    version_id = org.active_project_version_id
+    if version_id is not None:
+        from db.project_repository import ProjectRepository
+
+        repo = ProjectRepository(db)
+        version_row = await repo.get_version(version_id)
+        if version_row is not None:
+            from models.project_document import ProjectDocument
+
+            doc = ProjectDocument.model_validate(version_row.document)
+            return registry.for_org_at_version(
+                org.id, document=doc, version_id=version_id
+            )
+        # Stale pointer (e.g. version was deleted): fall through to seed.
+
+    return registry.for_org(org.id, project_id=org.active_project_id)
 
 
-def get_rec_service(
+async def get_rec_service(
     request: Request,
     org: Org = Depends(get_current_org),
+    source: SiteStateSource = Depends(get_source),
 ) -> RecommendationService:
-    _get_registry(request).for_org(org.id, project_id=org.active_project_id)
+    """Resolve the rec service for the org's *currently active* engine.
+
+    Critical: `Depends(get_source)` runs first so the registry has had
+    a chance to rebuild the engine on a version change. Otherwise the
+    rec service could end up pointing at the previous engine for an
+    instant after a version swap.
+    """
     return _get_registry(request).rec_service_for(org.id)
 
 

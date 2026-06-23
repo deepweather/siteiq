@@ -138,6 +138,25 @@ describe('Recommendations celebration card (bug #4)', () => {
     expect(screen.getByText(/Equipment scheduling/i)).toBeInTheDocument();
   });
 
+  it('groups release_equipment under Equipment scheduling (audit fix)', () => {
+    const recs: Recommendation[] = [
+      { ...makeRec('e1'), type: 'release_equipment' },
+    ];
+    render(<Recommendations recommendations={recs} onRecsChange={() => {}} />);
+    expect(screen.getByText(/Equipment scheduling/i)).toBeInTheDocument();
+    // NOT in the catch-all "Other" bucket.
+    expect(screen.queryByText(/^Other$/i)).toBeNull();
+  });
+
+  it('groups add_equipment under Vertical transport (audit fix)', () => {
+    const recs: Recommendation[] = [
+      { ...makeRec('v1'), type: 'add_equipment' },
+    ];
+    render(<Recommendations recommendations={recs} onRecsChange={() => {}} />);
+    expect(screen.getByText(/Vertical transport/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^Other$/i)).toBeNull();
+  });
+
   it('shows a success receipt on each applied row (UX feedback)', () => {
     const recs: Recommendation[] = [
       { ...makeRec('a', true), type: 'move_facility',

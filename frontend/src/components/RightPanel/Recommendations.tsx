@@ -20,7 +20,9 @@ const CELEBRATION_MS = 8000;
 /** Compute the "what physically changed" subtitle shown in toasts + applied
  *  cards. Different rec types deserve different framings:
  *   - move_facility / restage_material: "moved Nm closer"
- *   - reschedule_equipment: "released — N idle h/day reclaimed"
+ *   - release_equipment: "returned to rental pool"
+ *   - reschedule_equipment: "operations batched"
+ *   - add_equipment: "cab throughput doubled"
  */
 function describeChange(rec: Recommendation): string {
   if ((rec.type === 'move_facility' || rec.type === 'restage_material') && rec.to_position) {
@@ -29,9 +31,14 @@ function describeChange(rec: Recommendation): string {
     const moved = Math.hypot(dx, dy);
     return `Moved ${moved.toFixed(0)}m to a better location`;
   }
+  if (rec.type === 'release_equipment') {
+    return 'Returned to rental pool';
+  }
   if (rec.type === 'reschedule_equipment') {
-    // Description already says "X% utilization. Return to rental pool ..."
-    return rec.description.split(' ').slice(0, 12).join(' ');
+    return 'Operations batched — idle window cut';
+  }
+  if (rec.type === 'add_equipment') {
+    return 'Parallel cab added — throughput doubled';
   }
   return rec.description;
 }
@@ -234,7 +241,7 @@ export function Recommendations({ recommendations: recs, onRecsChange, onApplied
       {applied.length > 0 && (
         <div>
           <div className="text-xs text-muted-foreground font-medium mb-2">
-            Applied ({applied.length}) \u00b7 saving{' '}
+            Applied ({applied.length}) · saving{' '}
             <span className="font-mono text-success tabular-nums">
               {formatCurrency(applied.reduce((s, r) => s + r.monthly_savings, 0))}/mo
             </span>
@@ -298,5 +305,10 @@ function AppliedCard({ rec, zones }: { rec: Recommendation; zones?: Zone[] }) {
 const REC_CATEGORY: Record<string, { key: string; label: string; icon: string }> = {
   move_facility: { key: 'facility', label: 'Facility placement', icon: '🚻' },
   restage_material: { key: 'material', label: 'Material staging', icon: '📦' },
+  // Phase 1 audit fix: equipment recs split into release + reschedule.
+  // Both belong in the same "Equipment scheduling" UI category.
+  release_equipment: { key: 'equipment', label: 'Equipment scheduling', icon: '🏗️' },
   reschedule_equipment: { key: 'equipment', label: 'Equipment scheduling', icon: '🏗️' },
+  // Phase 4 audit fix: vertical-transport optimizer adds cab recs.
+  add_equipment: { key: 'vertical', label: 'Vertical transport', icon: '🛗' },
 };

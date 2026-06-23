@@ -49,11 +49,13 @@ def optimize_equipment(source: SiteStateSource) -> list[Recommendation]:
         daily_idle_hours = (1.0 - utilization) * WORKDAY_HOURS
 
         if utilization < 0.40:
+            # "Release" — return to rental pool entirely. Eliminates the
+            # equipment's idle cost contribution (apply sets state=REMOVED).
             daily_savings = daily_idle_hours * rate * 0.8
 
             recommendations.append(Recommendation(
-                id=f"opt-{asset.id}",
-                type="reschedule_equipment",
+                id=f"opt-release-{asset.id}",
+                type="release_equipment",
                 title=f"Release {label}",
                 description=f"{label} at {utilization:.0%} utilization. "
                             f"Return to rental pool — {zone_label} doesn't require "
@@ -65,10 +67,14 @@ def optimize_equipment(source: SiteStateSource) -> list[Recommendation]:
                 monthly_savings=round(daily_savings * WORKING_DAYS_PER_MONTH, 2),
             ))
         elif utilization < 0.60:
+            # "Reschedule" — keep the equipment on site but batch its
+            # operations so it idles less. Apply sets `idle_factor=0.4`
+            # in metadata; equipment_behavior shrinks the idle half of
+            # the duty cycle accordingly.
             daily_savings = daily_idle_hours * rate * 0.3
 
             recommendations.append(Recommendation(
-                id=f"opt-{asset.id}",
+                id=f"opt-reschedule-{asset.id}",
                 type="reschedule_equipment",
                 title=f"Reschedule {label} Operations",
                 description=f"{label} at {utilization:.0%} utilization. "

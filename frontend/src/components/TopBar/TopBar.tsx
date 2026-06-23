@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { formatSimTime } from '../../utils/formatting';
 import { setSimSpeed, togglePause, fetchProjects, loadProject, type ProjectSummary } from '../../services/api';
 
@@ -46,10 +47,10 @@ export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, 
     await togglePause();
   };
 
-  const handleProjectSelect = async (id: string) => {
+  const handleProjectSelect = async (slug: string) => {
     setSwitching(true);
     setShowPicker(false);
-    await loadProject(id);
+    await loadProject(slug);
     onProjectChange();
     setSwitching(false);
   };
@@ -69,6 +70,12 @@ export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, 
         >
           Portfolio
         </button>
+        <Link
+          to="/app/projects"
+          className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-secondary border border-border transition-colors"
+        >
+          Projects
+        </Link>
         {onShowSettings && (
           <button
             onClick={onShowSettings}
@@ -135,7 +142,7 @@ export function TopBar({ simTime, simDay, connected, siteName, onProjectChange, 
               {projects.map((p) => (
                 <button
                   key={p.id}
-                  onClick={() => handleProjectSelect(p.id)}
+                  onClick={() => handleProjectSelect(p.slug)}
                   className="w-full px-3 py-2.5 text-left hover:bg-secondary transition-colors border-b border-border last:border-0"
                   style={{ backgroundColor: 'hsl(var(--card))' }}
                 >

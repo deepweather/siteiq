@@ -18,6 +18,12 @@ def update_equipment(asset: Asset, dt_sim: float, engine) -> None:
     meta = asset.metadata
     meta["cycle_timer"] = meta.get("cycle_timer", 0.0) + dt_sim
 
+    # `idle_factor` is set by `_apply_rec` when the user applies a
+    # `reschedule_equipment` recommendation. It shrinks the idle half
+    # of the duty cycle (default 1.0 = no change; ~0.4 = "batched").
+    idle_factor = float(meta.get("idle_factor", 1.0))
+    idle_duration = cycle["idle_duration"] * idle_factor
+
     if asset.state == EquipmentState.OPERATING:
         meta["hours_active"] = meta.get("hours_active", 0.0) + dt_sim / 3600
         if meta["cycle_timer"] >= cycle["operate_duration"]:
@@ -26,7 +32,7 @@ def update_equipment(asset: Asset, dt_sim: float, engine) -> None:
             engine.log_activity(asset.id, "Cycle complete, now idle")
     elif asset.state == EquipmentState.IDLE:
         meta["hours_idle"] = meta.get("hours_idle", 0.0) + dt_sim / 3600
-        if meta["cycle_timer"] >= cycle["idle_duration"]:
+        if meta["cycle_timer"] >= idle_duration:
             asset.state = EquipmentState.OPERATING
             meta["cycle_timer"] = 0.0
             engine.log_activity(asset.id, "Restarted, now operating")

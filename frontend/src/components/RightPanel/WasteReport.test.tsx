@@ -164,3 +164,90 @@ describe('WasteReport zone-label fix (UX follow-up)', () => {
     expect(screen.getByText('Zone B')).toBeInTheDocument();
   });
 });
+
+
+describe('WasteReport — Phase 5 shoring compliance row', () => {
+  it('renders an "Unshored excavation" warning when any zone has compliance < 1.0', () => {
+    const wasteWithShoring: WasteSummary = {
+      ...waste,
+      shoring_compliance: [
+        { zone_id: 'zone-b', zone_label: 'Abschnitt B', compliance: 1.0, nearest_distance_m: 7.1 },
+        { zone_id: 'zone-d', zone_label: 'Pfeiler 4-6', compliance: 0.0, nearest_distance_m: 42.3 },
+        { zone_id: 'zone-e', zone_label: 'Widerlager Ost', compliance: 0.0, nearest_distance_m: null },
+      ],
+    };
+    render(
+      <WasteReport
+        waste={wasteWithShoring}
+        baseline={null}
+        savings={null}
+        pendingSavingsMonthly={0}
+        zones={zones}
+        onSwitchToOptimize={() => {}}
+      />,
+    );
+    expect(screen.getByText(/Unshored excavation/i)).toBeInTheDocument();
+    // Header summary: 2 of 3 zones flagged.
+    expect(screen.getByText(/2 of 3 excavation zones/i)).toBeInTheDocument();
+  });
+
+  it('expanding the row reveals the offending zone labels + distances', () => {
+    const wasteWithShoring: WasteSummary = {
+      ...waste,
+      shoring_compliance: [
+        { zone_id: 'zone-d', zone_label: 'Pfeiler 4-6', compliance: 0.0, nearest_distance_m: 42.3 },
+        { zone_id: 'zone-e', zone_label: 'Widerlager Ost', compliance: 0.0, nearest_distance_m: null },
+      ],
+    };
+    render(
+      <WasteReport
+        waste={wasteWithShoring}
+        baseline={null}
+        savings={null}
+        pendingSavingsMonthly={0}
+        zones={zones}
+        onSwitchToOptimize={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText(/Unshored excavation/i));
+    expect(screen.getByText('Pfeiler 4-6')).toBeInTheDocument();
+    expect(screen.getByText(/nearest pile 42 m/i)).toBeInTheDocument();
+    expect(screen.getByText('Widerlager Ost')).toBeInTheDocument();
+    expect(screen.getByText(/no sheet pile on this level/i)).toBeInTheDocument();
+  });
+
+  it('does NOT render the shoring row when every zone is compliant', () => {
+    const wasteAllCompliant: WasteSummary = {
+      ...waste,
+      shoring_compliance: [
+        { zone_id: 'zone-b', zone_label: 'Abschnitt B', compliance: 1.0, nearest_distance_m: 7.1 },
+        { zone_id: 'zone-c', zone_label: 'Abschnitt C', compliance: 1.0, nearest_distance_m: 5.0 },
+      ],
+    };
+    render(
+      <WasteReport
+        waste={wasteAllCompliant}
+        baseline={null}
+        savings={null}
+        pendingSavingsMonthly={0}
+        zones={zones}
+        onSwitchToOptimize={() => {}}
+      />,
+    );
+    expect(screen.queryByText(/Unshored excavation/i)).toBeNull();
+  });
+
+  it('does NOT render the shoring row on Hochbau projects (empty list)', () => {
+    render(
+      <WasteReport
+        waste={waste}
+        baseline={null}
+        savings={null}
+        pendingSavingsMonthly={0}
+        zones={zones}
+        onSwitchToOptimize={() => {}}
+      />,
+    );
+    expect(screen.queryByText(/Unshored excavation/i)).toBeNull();
+  });
+});

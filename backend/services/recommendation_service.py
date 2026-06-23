@@ -14,6 +14,7 @@ from models.analytics import Recommendation
 from optimization.equipment_schedule import optimize_equipment
 from optimization.facility_placement import optimize_toilet_placement
 from optimization.material_staging import optimize_material_staging
+from optimization.vertical_transport_optimizer import optimize_vertical_transport
 from state.source import SiteStateSource
 
 
@@ -24,6 +25,7 @@ DEFAULT_OPTIMIZERS: tuple[Callable[[SiteStateSource], list[Recommendation]], ...
     optimize_toilet_placement,
     optimize_material_staging,
     optimize_equipment,
+    optimize_vertical_transport,
 )
 
 

@@ -13,7 +13,8 @@ from __future__ import annotations
 from typing import Any, Iterable, Protocol, runtime_checkable
 
 from models.assets import Asset
-from models.site import Site, Zone
+from models.connection import Connection
+from models.site import Level, Site, Zone
 
 
 @runtime_checkable
@@ -51,6 +52,32 @@ class SiteStateSource(Protocol):
 
     def position_history_for(self, worker_id: str) -> list[tuple[float, float]]:
         """Recent (x,y) trail for a worker, oldest-first."""
+        ...
+
+    # ── Multi-level surface (Phase 2) ───────────────────────────────
+    #
+    # All consumers that don't care about levels see "L0" everywhere and
+    # behave exactly as before. Multi-level consumers (renderer, vertical
+    # transport, per-level optimizers) filter on `level_id`.
+
+    @property
+    def levels(self) -> list[Level]:
+        """The site's levels, ordered by `order` ascending (lowest UG
+        first, highest OG last)."""
+        ...
+
+    def level_by_id(self, level_id: str) -> Level | None: ...
+
+    def workers_in_level(self, level_id: str) -> list[Asset]: ...
+
+    @property
+    def connections(self) -> list[Connection]:
+        """Vertical-transport graph. Empty for single-floor projects."""
+        ...
+
+    def connections_from_level(self, level_id: str) -> list[Connection]:
+        """Every connection that touches `level_id` as one of its nodes.
+        Used by the FSM to find candidate stairs/elevators."""
         ...
 
 

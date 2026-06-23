@@ -273,8 +273,13 @@ def test_simulation_engine_loc_is_reasonable():
     brought it to 124. Subsequent additions:
       - step 6: `_rebuild_indexes` + indexed-lookup methods (~25 LOC)
       - heatmap: 1 field + 2 small methods (~10 LOC)
-    Budget = 200 keeps responsibility creep visible without being too tight."""
+      - Phase 1: `load_document` + ProjectDocument-aware constructor (~25 LOC)
+      - Phase 2: per-level facility + connection indexes,
+        `workers_in_level`, `connections_from_level` (~35 LOC)
+      - Phase 3: `cabs` instantiation + `_tick_cabs` wrapper (~20 LOC)
+      - Phase 6 audit fix: cabs summary in WS state snapshot (~15 LOC)
+    Budget = 340 keeps responsibility creep visible without being too tight."""
     from pathlib import Path
     engine_py = Path(__file__).parent.parent / "simulation" / "engine.py"
     loc = sum(1 for _ in engine_py.read_text().splitlines())
-    assert loc <= 200, f"engine.py is {loc} LOC — over the budget of 200"
+    assert loc <= 340, f"engine.py is {loc} LOC — over the budget of 340"

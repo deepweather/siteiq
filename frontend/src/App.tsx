@@ -26,6 +26,8 @@ const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
 const AcceptInvitePage = lazy(() => import('./pages/AcceptInvitePage'));
 const MagicLinkPage = lazy(() => import('./pages/MagicLinkPage'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const ProjectListPage = lazy(() => import('./pages/projects/ProjectListPage'));
+const ProjectEditorPage = lazy(() => import('./pages/projects/ProjectEditorPage'));
 const SettingsLayout = lazy(() => import('./pages/settings/SettingsLayout'));
 const AccountSettings = lazy(() => import('./pages/settings/AccountSettings'));
 const TeamSettings = lazy(() => import('./pages/settings/TeamSettings'));
@@ -70,6 +72,23 @@ export default function App() {
               element={
                 <RequireAuth>
                   <Lazy><Dashboard /></Lazy>
+                </RequireAuth>
+              }
+            />
+
+            <Route
+              path="/app/projects"
+              element={
+                <RequireAuth>
+                  <Lazy><ProjectListPage /></Lazy>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/app/projects/:id/edit"
+              element={
+                <RequireAuth>
+                  <Lazy><ProjectEditorPage /></Lazy>
                 </RequireAuth>
               }
             />

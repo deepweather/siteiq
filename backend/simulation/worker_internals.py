@@ -54,6 +54,25 @@ class WorkerInternals:
     material_trip_start_time: float = 0.0
     material_total_round_trip: float = 0.0
 
+    # ── Phase 3: vertical transport ─────────────────────────────────
+    # Set while routing through a stair / elevator. Phase-3 FSM uses
+    # them to track the target level + final ground-level position
+    # the worker is trying to reach on the OTHER level.
+    target_level_id: str | None = None
+    # The final (level-local x, y) the worker wants to land on AFTER
+    # arriving on `target_level_id`. Distinct from `target` which is
+    # the next-step (stair/elevator anchor on the current level).
+    cross_level_destination: Position | None = None
+    # If the worker is queued for an elevator cab, this is the cab id.
+    # Stair traversal does not use the queue and leaves this empty.
+    vertical_connection_id: str = ""
+    # Sim-clock timestamp when the worker first joined the queue.
+    # Used by Phase-4 analytics to compute vertical-transport waste.
+    vertical_queue_enter_time: float = 0.0
+    # Total sim-seconds spent waiting for + riding vertical transport,
+    # accumulated across the current sim-day. Reset daily.
+    time_in_vertical_transport: float = 0.0
+
     def reset_daily(self) -> None:
         """Clear all per-day counters. Called at the day boundary."""
         self.toilet_trips_today = 0
@@ -63,3 +82,4 @@ class WorkerInternals:
         self.time_working = 0.0
         self.time_walking = 0.0
         self.time_at_facilities = 0.0
+        self.time_in_vertical_transport = 0.0

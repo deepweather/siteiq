@@ -41,6 +41,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "sim_day": source.sim_day,
                     "assets": [a.to_broadcast_dict() for a in source.assets],
                     "trails": {},
+                    "cabs": [],
                 }
             analytics = registry.latest_analytics_for(org_id)
             payload = {
@@ -49,6 +50,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "sim_day": snapshot["sim_day"],
                 "assets": snapshot["assets"],
                 "trails": snapshot["trails"],
+                "cabs": snapshot.get("cabs", []),
                 "analytics": analytics.model_dump() if analytics else None,
             }
             await websocket.send_json(payload)

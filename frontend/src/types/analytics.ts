@@ -19,6 +19,15 @@ export interface EquipmentMetrics {
   daily_idle_cost: number;
 }
 
+export interface ZoneShoringCompliance {
+  zone_id: string;
+  zone_label: string;
+  /** 1.0 = backed by a sheet pile within the influence radius, 0.0 = exposed. */
+  compliance: number;
+  nearest_sheet_pile_id?: string | null;
+  nearest_distance_m?: number | null;
+}
+
 export interface WasteSummary {
   toilet_walk_daily: number;
   toilet_walk_monthly: number;
@@ -26,10 +35,17 @@ export interface WasteSummary {
   material_handling_monthly: number;
   equipment_idle_daily: number;
   equipment_idle_monthly: number;
+  /** Phase 4: time workers spend queueing for + riding elevators.
+   *  Defaults to 0 for single-floor projects. */
+  vertical_transport_daily?: number;
+  vertical_transport_monthly?: number;
   total_daily: number;
   total_monthly: number;
   zone_metrics: ZoneTravelMetrics[];
   equipment_metrics: EquipmentMetrics[];
+  /** Phase 5: Tiefbau shoring-compliance per EXCAVATION zone.
+   *  Empty on Hochbau projects. */
+  shoring_compliance?: ZoneShoringCompliance[];
 }
 
 export interface Recommendation {

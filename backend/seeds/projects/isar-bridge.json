@@ -1,0 +1,307 @@
+{
+  "connections": [],
+  "description": "120m span highway bridge replacement. Linear construction site along the river with phased lane closures.",
+  "discipline": "tiefbau",
+  "equipment": [
+    {
+      "id": "crane-1",
+      "level_id": "L0",
+      "state": "operating",
+      "subtype": "tower_crane",
+      "x": 130.0,
+      "y": 55.0
+    },
+    {
+      "id": "crane-2",
+      "level_id": "L0",
+      "state": "operating",
+      "subtype": "tower_crane",
+      "x": 230.0,
+      "y": 55.0
+    },
+    {
+      "id": "pump-1",
+      "level_id": "L0",
+      "state": "idle",
+      "subtype": "concrete_pump",
+      "x": 90.0,
+      "y": 110.0
+    },
+    {
+      "id": "pump-2",
+      "level_id": "L0",
+      "state": "idle",
+      "subtype": "concrete_pump",
+      "x": 270.0,
+      "y": 110.0
+    },
+    {
+      "id": "excavator-1",
+      "level_id": "L0",
+      "state": "operating",
+      "subtype": "excavator",
+      "x": 300.0,
+      "y": 75.0
+    }
+  ],
+  "facilities": [
+    {
+      "id": "toilet-1",
+      "level_id": "L0",
+      "subtype": "toilet",
+      "x": 5.0,
+      "y": 5.0
+    },
+    {
+      "id": "toilet-2",
+      "level_id": "L0",
+      "subtype": "toilet",
+      "x": 345.0,
+      "y": 5.0
+    },
+    {
+      "id": "breakroom",
+      "level_id": "L0",
+      "subtype": "breakroom",
+      "x": 175.0,
+      "y": 5.0
+    },
+    {
+      "id": "office",
+      "level_id": "L0",
+      "subtype": "office",
+      "x": 5.0,
+      "y": 110.0
+    },
+    {
+      "id": "toolcrib",
+      "level_id": "L0",
+      "subtype": "toolcrib",
+      "x": 345.0,
+      "y": 110.0
+    }
+  ],
+  "height": 120.0,
+  "levels": [
+    {
+      "background_image_url": null,
+      "elevation_m": 0.0,
+      "id": "L0",
+      "name": "EG",
+      "order": 0
+    }
+  ],
+  "materials": [
+    {
+      "id": "mat-rebar",
+      "level_id": "L0",
+      "needed_in": "zone-c",
+      "subtype": "rebar",
+      "x": 170.0,
+      "y": 115.0
+    },
+    {
+      "id": "mat-rebar-2",
+      "level_id": "L0",
+      "needed_in": "zone-b",
+      "subtype": "rebar",
+      "x": 180.0,
+      "y": 115.0
+    },
+    {
+      "id": "mat-concrete",
+      "level_id": "L0",
+      "needed_in": "zone-a",
+      "subtype": "concrete",
+      "x": 160.0,
+      "y": 115.0
+    },
+    {
+      "id": "mat-concrete-2",
+      "level_id": "L0",
+      "needed_in": "zone-d",
+      "subtype": "concrete",
+      "x": 190.0,
+      "y": 115.0
+    }
+  ],
+  "name": "Brückenneubau B2 Isarbrücke — München",
+  "schedule": [
+    {
+      "end_day": 50,
+      "phase": "foundation",
+      "start_day": 1,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-a"
+    },
+    {
+      "end_day": 110,
+      "phase": "structural",
+      "start_day": 51,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-a"
+    },
+    {
+      "end_day": 60,
+      "phase": "excavation",
+      "start_day": 20,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-b"
+    },
+    {
+      "end_day": 140,
+      "phase": "structural",
+      "start_day": 61,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-b"
+    },
+    {
+      "end_day": 180,
+      "phase": "structural",
+      "start_day": 80,
+      "trades_required": [
+        "structural",
+        "general"
+      ],
+      "zone_id": "zone-c"
+    },
+    {
+      "end_day": 150,
+      "phase": "excavation",
+      "start_day": 100,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-d"
+    },
+    {
+      "end_day": 190,
+      "phase": "foundation",
+      "start_day": 151,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-d"
+    },
+    {
+      "end_day": 170,
+      "phase": "excavation",
+      "start_day": 120,
+      "trades_required": [
+        "general"
+      ],
+      "zone_id": "zone-e"
+    },
+    {
+      "end_day": 210,
+      "phase": "foundation",
+      "start_day": 171,
+      "trades_required": [
+        "structural"
+      ],
+      "zone_id": "zone-e"
+    }
+  ],
+  "schema_version": 1,
+  "slug": "isar-bridge",
+  "start_day": 135,
+  "type": "Infrastructure",
+  "width": 350.0,
+  "worker_seeds": [
+    {
+      "count": 10,
+      "trade": "structural",
+      "zone_id": "zone-a"
+    },
+    {
+      "count": 12,
+      "trade": "structural",
+      "zone_id": "zone-b"
+    },
+    {
+      "count": 16,
+      "trade": "structural",
+      "zone_id": "zone-c"
+    },
+    {
+      "count": 4,
+      "trade": "general",
+      "zone_id": "zone-c"
+    },
+    {
+      "count": 8,
+      "trade": "general",
+      "zone_id": "zone-d"
+    },
+    {
+      "count": 6,
+      "trade": "general",
+      "zone_id": "zone-e"
+    }
+  ],
+  "zones": [
+    {
+      "height": 70.0,
+      "id": "zone-a",
+      "label": "Widerlager West",
+      "level_id": "L0",
+      "phase": "foundation",
+      "phase_progress": 0.9,
+      "width": 60.0,
+      "x": 10.0,
+      "y": 25.0
+    },
+    {
+      "height": 60.0,
+      "id": "zone-b",
+      "label": "Pfeiler 1-3",
+      "level_id": "L0",
+      "phase": "structural",
+      "phase_progress": 0.55,
+      "width": 70.0,
+      "x": 80.0,
+      "y": 30.0
+    },
+    {
+      "height": 70.0,
+      "id": "zone-c",
+      "label": "Überbau Mitte",
+      "level_id": "L0",
+      "phase": "structural",
+      "phase_progress": 0.3,
+      "width": 80.0,
+      "x": 160.0,
+      "y": 25.0
+    },
+    {
+      "height": 60.0,
+      "id": "zone-d",
+      "label": "Pfeiler 4-6",
+      "level_id": "L0",
+      "phase": "excavation",
+      "phase_progress": 0.6,
+      "width": 50.0,
+      "x": 250.0,
+      "y": 30.0
+    },
+    {
+      "height": 70.0,
+      "id": "zone-e",
+      "label": "Widerlager Ost",
+      "level_id": "L0",
+      "phase": "excavation",
+      "phase_progress": 0.2,
+      "width": 35.0,
+      "x": 310.0,
+      "y": 25.0
+    }
+  ]
+}

@@ -17,6 +17,25 @@ Configure via `.env` (see `backend/.env.example`). In dev, transactional
 emails are written to `email_outbox` and visible at
 `http://localhost:8000/dev/outbox`.
 
+#### Local demo user
+
+For poking around the dashboard without going through signup +
+verification email, run the idempotent seed script:
+
+```bash
+cd backend
+uv run python seed_demo_user.py
+# email:    demo@siteiq.dev
+# password: DemoPassword123!
+# org:      Demo Construction (owner)
+```
+
+The script writes directly via the ORM, so the email-verify token is
+skipped and the user lands on the dashboard immediately. Re-running it
+just resets the password — handy after wiping `siteiq.db`. Override
+`SITEIQ_DEMO_EMAIL`, `SITEIQ_DEMO_PASSWORD`, `SITEIQ_DEMO_NAME`, or
+`SITEIQ_DEMO_COMPANY` if you want different defaults.
+
 ### Frontend
 ```bash
 cd frontend

@@ -16,6 +16,7 @@ import asyncio
 import logging
 from typing import Callable
 
+from models.project_document import ProjectDocument
 from services.recommendation_service import RecommendationService
 from simulation.engine import SimulationEngine
 from state.source import SiteStateSource
@@ -71,6 +72,43 @@ class SourceRegistry:
                 extra={"org_id": org_id, "project": eng.project_id},
             )
         return eng
+
+    def for_org_at_version(
+        self,
+        org_id: str,
+        *,
+        document: ProjectDocument,
+        version_id: str,
+    ) -> SimulationEngine:
+        """Return the engine for the org, ensuring it's running on the
+        document at `version_id`. If the engine is missing or pinned to
+        a different version, it's torn down and rebuilt.
+
+        Used by the editor / activate-version flow. The legacy
+        `for_org(org_id, project_id=...)` path stays in place for the
+        seed-slug-based load_project endpoint.
+        """
+        eng = self._engines.get(org_id)
+        if eng is not None and eng.project_version_id == version_id:
+            return eng
+        # Discard and rebuild on a version mismatch.
+        if eng is not None:
+            eng.running = False
+        new_eng = SimulationEngine(
+            project_id=document.slug,
+            document=document,
+            project_version_id=version_id,
+        )
+        self._engines[org_id] = new_eng
+        self._rec_services[org_id] = RecommendationService(new_eng)
+        # Latest analytics for the old version is stale; clear it so
+        # the next analytics tick fills it in fresh for the new doc.
+        self._latest_analytics.pop(org_id, None)
+        logger.info(
+            "source_engine_versioned",
+            extra={"org_id": org_id, "slug": document.slug, "version": version_id[:8]},
+        )
+        return new_eng
 
     def set(self, org_id: str, source: SimulationEngine) -> None:
         """Test hook: replace (or pre-seed) a source for an org."""

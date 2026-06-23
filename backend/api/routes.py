@@ -16,7 +16,7 @@ from db.session import get_db
 from models.assets import Position, EquipmentState
 from services.recommendation_service import RecommendationService
 from simulation.engine import SimulationEngine
-from simulation.site_factory import PROJECT_TEMPLATES, get_project_list
+from simulation.site_factory import PROJECT_TEMPLATES
 from state.source import SiteStateSource
 
 router = APIRouter()
@@ -26,9 +26,8 @@ class SpeedRequest(BaseModel):
     speed: float
 
 
-@router.get("/api/projects")
-async def list_projects(_: Org = Depends(get_current_org)):
-    return get_project_list()
+class LoadSeedRequest(BaseModel):
+    slug: str
 
 
 @router.get("/api/portfolio")
@@ -88,25 +87,54 @@ async def get_portfolio(
     return portfolio
 
 
-@router.post("/api/projects/{project_id}/load")
-async def load_project(
+@router.post("/api/site/load-seed")
+async def load_seed_project(
+    req: LoadSeedRequest,
+    source: SiteStateSource = Depends(get_source),
+    rec_service: RecommendationService = Depends(get_rec_service),
+    org: Org = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch the org's simulation to one of the bundled seed projects
+    by slug. Kept for the dashboard's stock-project switcher. Custom
+    projects go through `POST /api/projects/{id}/activate` instead."""
+    if req.slug not in PROJECT_TEMPLATES:
+        raise HTTPException(status_code=404, detail="Project not found")
+    # The source's project-switch capability is simulation-specific.
+    if isinstance(source, SimulationEngine):
+        source.load_project(req.slug)
+    rec_service.clear()
+    # Persist so the choice survives a backend restart.
+    org.active_project_id = req.slug
+    # Drop any pinned doc version so the next access falls back to the
+    # slug-based seed path instead of restoring the previous doc.
+    org.active_project_version_id = None
+    await db.flush()
+    return {"status": "loaded", "slug": req.slug}
+
+
+@router.post("/api/projects/{project_id}/load", deprecated=True)
+async def load_project_legacy(
     project_id: str,
     source: SiteStateSource = Depends(get_source),
     rec_service: RecommendationService = Depends(get_rec_service),
     org: Org = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
+    """Backwards-compat alias for the original slug-based load route.
+
+    Removed once the dashboard's TopBar is migrated to call
+    `POST /api/site/load-seed` directly. The path string `project_id`
+    here is interpreted as a seed slug, not a UUID. UUID-keyed
+    activation lives at `POST /api/projects/{uuid}/activate`.
+    """
     if project_id not in PROJECT_TEMPLATES:
         raise HTTPException(status_code=404, detail="Project not found")
-    # The source's project-switch capability is simulation-specific. We accept
-    # the duck-typed approach for now — LiveSource would expose its own
-    # "subscribe to a different site" semantics.
     if isinstance(source, SimulationEngine):
         source.load_project(project_id)
     rec_service.clear()
-    # Persist so the choice survives a backend restart (the registry
-    # rebuilds engines from `org.active_project_id` on first access).
     org.active_project_id = project_id
+    org.active_project_version_id = None
     await db.flush()
     return {"status": "loaded", "project_id": project_id}
 
@@ -124,6 +152,11 @@ async def get_site(
         "zones": [z.model_dump() for z in source.site.zones],
         "current_day": source.sim_day,
         "schedule": [s.model_dump() for s in source.site.schedule],
+        # Multi-level surface (Phase 6). Single-floor projects emit the
+        # one default L0 level + empty connections.
+        "levels": [lv.model_dump() for lv in source.site.levels],
+        "connections": [c.model_dump() for c in source.connections],
+        "discipline": source.site.discipline.value if hasattr(source.site.discipline, "value") else source.site.discipline,
     }
 
 
@@ -166,17 +199,65 @@ async def apply_all(
 
 
 def _apply_rec(rec, source: SiteStateSource) -> None:
+    """Mutate the simulation to enact a recommendation.
+
+    Every branch here MUST produce a real, measurable change in the
+    next analytics tick — otherwise the green-checkmark UX is a lie.
+    """
     rec.applied = True
+
+    # `add_equipment` targets a Connection (elevator), not an Asset.
+    # Handle it before the asset lookup so the rest of the function
+    # can assume `asset is not None`.
+    if rec.type == "add_equipment":
+        cabs = getattr(source, "cabs", None)
+        if cabs is None:
+            return
+        cab = cabs.get(rec.target_asset_id)
+        if cab is None:
+            return
+        # Doubling the cab capacity is a coarse stand-in for adding a
+        # parallel cab on the same shaft — throughput doubles, the
+        # queue empties faster, and vertical-transport waste drops on
+        # the next analytics tick. Not a faithful kinematic model
+        # (real second cab can be at a different floor at the same
+        # instant) but the dashboard-level metric is what the demo
+        # surfaces, and that's what changes.
+        cab.capacity = max(cab.capacity * 2, cab.capacity + 1)
+        cab.extra_cab_count += 1
+        return
+
     asset = source.asset_by_id(rec.target_asset_id)
     if not asset:
         return
+
     if rec.type == "move_facility" and rec.to_position:
-        asset.position = Position(x=rec.to_position.x, y=rec.to_position.y)
+        # Multi-level: keep the asset on its current floor. Without
+        # this, `Position(x=..., y=...)` defaults `level_id="L0"` and
+        # the asset teleports to the ground floor.
+        asset.position = Position(
+            x=rec.to_position.x,
+            y=rec.to_position.y,
+            level_id=asset.position.level_id,
+        )
     elif rec.type == "restage_material" and rec.to_position:
-        asset.position = Position(x=rec.to_position.x, y=rec.to_position.y)
+        asset.position = Position(
+            x=rec.to_position.x,
+            y=rec.to_position.y,
+            level_id=asset.position.level_id,
+        )
+    elif rec.type == "release_equipment":
+        # Hard release: return to rental pool. The asset is excluded
+        # from `compute_equipment_utilization` once REMOVED, so its
+        # idle cost contribution drops to zero immediately.
+        asset.state = EquipmentState.REMOVED
     elif rec.type == "reschedule_equipment":
-        if rec.to_position is None:
-            asset.state = EquipmentState.REMOVED
+        # Batch operations: shrink the IDLE half of the duty cycle.
+        # `update_equipment` multiplies the cycle's idle_duration by
+        # `meta.get("idle_factor", 1.0)` — 0.4 halves-ish the idle
+        # window, lifting utilization toward 60-70%. Real per-tick
+        # behavior change; not a marker flag.
+        asset.metadata["idle_factor"] = 0.4
 
 
 @router.get("/api/assets/{asset_id}")
@@ -228,10 +309,16 @@ async def get_sim_state(
 
 @router.get("/api/simulation/heatmap")
 async def get_heatmap(
+    level_id: str | None = None,
     source: SiteStateSource = Depends(get_source),
     _: Org = Depends(get_current_org),
 ):
-    """Cumulative foot-traffic density grid for the current sim day."""
+    """Cumulative foot-traffic density grid for the current sim day.
+
+    Multi-level: pass `?level_id=L0` (or similar) to scope the grid
+    to that level. Omit the param to pool every level into one map —
+    backwards-compatible with single-floor clients.
+    """
     if not isinstance(source, SimulationEngine):
         raise HTTPException(status_code=501, detail="heatmap only available for simulation source")
-    return source.density_snapshot()
+    return source.density_snapshot(level_id=level_id)

@@ -28,6 +28,8 @@ from analytics.aggregator import compute_waste_summary
 from api.camera import router as camera_router
 from api.dev import router as dev_router
 from api.health import router as health_router
+from api.projects import router as projects_router
+from api.project_assets import router as project_assets_router
 from api.request_id import RequestIdMiddleware
 from api.routes import router as api_router
 from api.security_headers import SecurityHeadersMiddleware
@@ -42,6 +44,7 @@ from config import ANALYTICS_UPDATE_INTERVAL, SIM_TICK_INTERVAL
 from db.engine import create_db_engine
 import logging_config
 from orgs.routes import router as orgs_router
+from seeds.importer import import_seed_projects
 from services.portfolio_estimator import compute_all_estimates
 from settings import Settings, get_settings
 from state.registry import make_registry, run_loops_for_registry
@@ -94,6 +97,14 @@ async def lifespan(app: FastAPI):
     # prod. Tests flip `app.state.limiter.enabled = False` to opt out.
     configure_storage(settings.rate_limit_redis_url)
     app.state.limiter = limiter
+
+    # ---- Seeds ----
+    # Import the bundled `seeds/projects/*.json` documents as public-template
+    # rows. Idempotent: same content hash → no-op. Updated seed → new version.
+    try:
+        await import_seed_projects(session_factory)
+    except Exception:
+        logger.exception("seed_import_failed")
 
     # ---- Simulation ----
     registry = make_registry(default_project_id=settings.default_project_id)
@@ -237,6 +248,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(orgs_router)
+    app.include_router(projects_router)
+    app.include_router(project_assets_router)
     app.include_router(api_router)
     app.include_router(ws_router)
     app.include_router(camera_router)

@@ -4,11 +4,14 @@ import type { Recommendation } from '../../types/analytics';
 import type { HeatmapData } from '../../services/api';
 import { TRADE_COLORS } from '../../utils/colors';
 
-interface RenderOptions {
+export interface RenderOptions {
   showTrails: boolean;
   showHeatmap: boolean;
   showRecs: boolean;
 }
+
+// Re-export for IsoRenderer.
+export type { HeatmapData };
 
 // Per-frame transform state. Reset synchronously at the top of every
 // renderFrame() call and consumed by px/py/ps inside the same call.

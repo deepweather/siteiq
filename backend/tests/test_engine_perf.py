@@ -86,3 +86,25 @@ def test_workers_in_zone_after_project_switch():
     eng.load_project("europa-quarter")
     workers_f = eng.workers_in_zone("zone-f")
     assert len(workers_f) > 0  # zone-f has workers in europa-quarter
+
+
+def test_tick_under_5ms_at_full_load():
+    """Phase 0 baseline lock-in.
+
+    Each tick has to fit comfortably inside the 100ms sim interval even
+    when we layer on the cab-tracked elevator FSM (Phase 3). 5ms/tick at
+    the largest stock project leaves 95ms of headroom for the
+    yet-to-come work.
+    """
+    # isar-bridge has the highest worker count of the stock templates.
+    eng = SimulationEngine(project_id="isar-bridge")
+    # Warm-up so any first-tick allocations are out of the way.
+    for _ in range(10):
+        eng.tick()
+    t0 = time.perf_counter()
+    for _ in range(50):
+        eng.tick()
+    elapsed = (time.perf_counter() - t0) / 50
+    assert elapsed < 0.005, (
+        f"tick averages {elapsed*1000:.2f}ms — over the 5ms Phase 0 budget"
+    )

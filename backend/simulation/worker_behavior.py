@@ -6,6 +6,7 @@ import random
 from models.assets import Asset, Position, WorkerState
 from models.connection import Connection
 from models.site import Site, Zone
+from simulation.vertical_transport import CabState
 from simulation.worker_internals import WorkerInternals
 from config import (
     WORKER_SPEED, TOILET_INTERVAL, BREAK_INTERVAL, MATERIAL_RUN_INTERVAL,
@@ -22,7 +23,10 @@ class _WorkerEngine(Protocol):
     site: Site
     worker_internals: dict[str, WorkerInternals]
     # Phase 3: live elevator cab state, keyed by Connection.id.
-    cabs: dict[str, object]
+    cabs: dict[str, CabState]
+    # Full connection list (stairs + elevators) on the engine; used by
+    # `_resolve_connection` for lookups by id.
+    connections: list[Connection]
 
     def log_activity(self, asset_id: str, event: str) -> None: ...
 
@@ -470,11 +474,7 @@ def _clear_vertical_state(internals: WorkerInternals) -> None:
 def _resolve_connection(engine: _WorkerEngine, conn_id: str) -> Connection | None:
     if not conn_id:
         return None
-    # Engines have `connections` either as an attribute or a property.
-    conns = getattr(engine, "connections", None)
-    if not conns:
-        return None
-    for c in conns:
+    for c in engine.connections:
         if c.id == conn_id:
             return c
     return None

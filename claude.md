@@ -1,8 +1,14 @@
 # SiteIQ — Claude Context
 
 Live architecture reference for AI coding agents. Describes the system as
-it stands today. Historical bug fixes, completed refactors, and closed
-debt live in [`CHANGELOG.md`](CHANGELOG.md) — don't bring them back here.
+it stands today.
+
+Sibling docs:
+- [`VISION.md`](VISION.md) — why this product exists, the wedge, the
+  endgame. Read first if you need product context.
+- [`CHANGELOG.md`](CHANGELOG.md) — historical bug fixes, completed
+  refactors, closed debt. Don't drag any of that back into this file.
+- [`README.md`](README.md) — how to run it locally + via Docker.
 
 ## What this is
 

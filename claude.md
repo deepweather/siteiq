@@ -32,8 +32,11 @@ Two intentionally-disconnected systems behind a self-hosted auth layer:
                               │  Public:  / /login /signup /forgot-password │
                               │           /reset-password /verify-email     │
                               │           /accept-invite                    │
-                              │  Gated /app/*  (RequireAuth):               │
-                              │   Dashboard + Settings + Projects/Editor    │
+                              │  Gated /app/* (RequireAuth → AppLayout):    │
+                              │   Chrome (MenuBar + Sidebar + StatusBar)    │
+                              │     ↳ Dashboard / Portfolio / Projects /    │
+                              │       Settings                              │
+                              │   Editor (full-viewport, outside Chrome)    │
                               └────────────────┬────────────────────────────┘
                                                │ cookie + CSRF
                                                ▼
@@ -99,7 +102,7 @@ this — a future `LiveSource` drops in by changing only the registry's
 | Persistence | SQLAlchemy 2.0 async, Alembic, aiosqlite (dev/test) / asyncpg (prod) |
 | Auth | argon2-cffi (passwords), opaque server-side sessions, slowapi (rate limit), httpx (Resend) |
 | Frontend | React 19, Vite 8, TypeScript 6, Tailwind CSS 3, HTML5 Canvas |
-| Frontend libs | react-router-dom v6, react-hook-form, zod, @zxcvbn-ts (lazy), sonner |
+| Frontend libs | react-router-dom v7, react-hook-form, zod, @zxcvbn-ts (lazy), sonner |
 | CV | ultralytics (YOLOv8n), opencv-python-headless |
 | Package mgmt | uv (backend), npm (frontend) |
 | Real-time | WebSocket at 10 Hz for sim state, ~5 Hz for camera frames |
@@ -316,7 +319,7 @@ TestClient lifespans fast — they fall back to the legacy formula
   After a 2 s grace, drops a sticky "Reconnecting…" toast; on reconnect
   it auto-replaces with a 2.5 s "Live again" success.
 - All routes are split via `React.lazy` + `Suspense`. Initial bundle
-  ~243 KB; each settings page is 1–8 KB on its own.
+  ~245 KB (gzip ~78 KB); each settings page is 1–8 KB on its own.
 
 ## Backend modules
 
@@ -887,19 +890,25 @@ The previous Waste/Optimize/Timeline tab framing is gone — Timeline
 content lives in the editor's Schedule tab where it semantically
 belongs, and Recommendations are folded into the Apply CTA's inline
 expander so the cost story stays the dominant rail.
-- **Recommendations** — "Available Savings" banner with monthly + annual
-  total. "Apply All N Optimizations" button with spinner state.
-  Individual rec cards with Apply buttons. Post-apply celebration card
-  keyed off `celebrationSig` (auto-hides on project switch or new rec
-  set; 8 s timer fallback). Applied list at bottom.
-- **Timeline** — Gantt chart from schedule data. Takes `zones` as prop;
-  `TOTAL_DAYS = max(schedule.end_day, currentDay + 5, 120)`.
-- **AssetDetail** — Worker: productivity bar (work/walk/facility split),
-  distance, trips, round-trip times. Equipment: utilization gauge, duty
-  cycle progress (denominator switches between `operate_duration_s` /
-  `idle_duration_s` based on state). Facility: workers present list.
-  Material: target zone (uses `needed_in_zone_label` from backend) +
-  distance. Activity log with sim-clock timestamps.
+
+Component breakdown (all under `components/RightPanel/`):
+- **`WasteReport.tsx`** — owns the cost story + Apply CTA. Renders the
+  hero animated number, ROI strip, Apply button (with the recovered
+  euros in-button), an inline "N optimisations" expander that mounts
+  `<Recommendations/>`, and the "what's bleeding" rows.
+- **`Recommendations.tsx`** — embedded inside the expander. "Apply All"
+  button with spinner, per-rec cards with Apply buttons, post-apply
+  celebration card keyed off `celebrationSig` (auto-hides on project
+  switch or new rec set; 8 s timer fallback), applied list at bottom.
+- **`Timeline.tsx`** — Gantt chart from schedule data. Used by the
+  editor's Schedule tab; not rendered in the runtime right rail.
+- **`AssetDetail.tsx`** — Worker: productivity bar (work/walk/facility
+  split), distance, trips, round-trip times. Equipment: utilization
+  gauge, duty cycle progress (denominator switches between
+  `operate_duration_s` / `idle_duration_s` based on state). Facility:
+  workers present list. Material: target zone (uses
+  `needed_in_zone_label` from backend) + distance. Activity log with
+  sim-clock timestamps.
 
 ### `Portfolio.tsx`
 Routed page (`/app/portfolio`) rendered inside `<Chrome>`. Summary cards
@@ -928,11 +937,12 @@ values use `tabular-nums` for stable width.
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend | **287** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, microbench gates |
-| Frontend | **99** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel) |
+| Backend | **309** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, **navmesh + path-following + optimizer walkable-clamp**, microbench gates |
+| Frontend | **104** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), **MenuBar (project switch, settings nav, sign out)** |
 
 Mypy strict scoped to `simulation/worker_internals.py`,
-`simulation/worker_behavior.py`, `state/source.py` — clean.
+`simulation/worker_behavior.py`, `simulation/navmesh.py`,
+`state/source.py` — clean.
 
 Microbench gates locked in:
 - `test_tick_under_5ms_at_full_load` — 50 ticks of `isar-bridge` average < 5 ms.
@@ -976,7 +986,7 @@ Mutating requests carry `credentials: 'include'` + `X-CSRF-Token`.
 | `/auth/me` | GET | `AuthProvider` boot | `{user, org, memberships}` — `null`s when anonymous |
 | `/auth/signup` | POST | `SignupPage` | Creates user + org (owner) + session; sends verification email |
 | `/auth/login` | POST | `LoginPage` | Returns `MeResponse` and sets session cookie |
-| `/auth/logout` | POST | `SettingsLayout` | Revokes active session, clears cookie + CSRF cache |
+| `/auth/logout` | POST | `MenuBar` (Account menu), `SettingsLayout`, `CommandPalette` | Revokes active session, clears cookie + CSRF cache |
 | `/auth/forgot-password` | POST | `ForgotPasswordPage` | Always 200 — never reveals whether the email exists |
 | `/auth/reset-password` | POST | `ResetPasswordPage` | Single-use token, revokes all sessions, issues fresh |
 | `/auth/verify-email` | POST | `VerifyEmailPage` | Single-use token, 24h TTL |
@@ -1012,13 +1022,13 @@ Mutating requests carry `credentials: 'include'` + `X-CSRF-Token`.
 |--------------|--------|----------------|-------|
 | `/api/portfolio` | GET | `Portfolio.tsx` via `fetchPortfolio()` | On mount |
 | `/api/site` | GET | `useSimulation.ts` via `fetchSite()` | On mount + reload |
-| `/api/site/load-seed` | POST | `TopBar.handleProjectSelect` | Legacy stock-project switcher; no-op when slug already active |
-| `/api/recommendations` | GET | `Dashboard.tsx` | 5s polling |
-| `/api/recommendations/{id}/apply` | POST | `Recommendations.tsx` | On click |
+| `/api/site/load-seed` | POST | `LiveContext.switchProject` (called by `MenuBar` project popover, `Portfolio.tsx`, `CommandPalette`) | Stock-project switcher; no-op when slug already active |
+| `/api/recommendations` | GET | `LiveContext.tsx` | 5s polling, exposed to consumers via `useLive().recommendations` |
+| `/api/recommendations/{id}/apply` | POST | `Recommendations.tsx`, `CommandPalette` | On click |
 | `/api/recommendations/apply-all` | POST | `Recommendations.tsx` | On click |
 | `/api/assets/{id}` | GET | `AssetDetail.tsx` | 1.5s polling when selected |
-| `/api/simulation/speed` | POST | `TopBar.tsx` | On speed button click |
-| `/api/simulation/pause` | POST | `TopBar.tsx` | On pause button click |
+| `/api/simulation/speed` | POST | `LiveContext.setSpeed` (called by `MenuBar` + `CommandPalette`) | On speed button click |
+| `/api/simulation/pause` | POST | `LiveContext.togglePaused` (called by `MenuBar` + `CommandPalette`) | On pause button click |
 | `/api/simulation/state` | GET | *unused by frontend* | Exists as fallback |
 | `/api/simulation/heatmap` | GET | `SiteMap.tsx` (when toggled) | Sparse density grid, daily reset |
 | `/api/cameras` | GET | `SiteMap.tsx` inline fetch | When cameras toggle enabled |
@@ -1029,7 +1039,7 @@ Mutating requests carry `credentials: 'include'` + `X-CSRF-Token`.
 
 | Backend route | Method | Frontend caller |
 |--------------|--------|-----------------|
-| `/api/projects` | GET | `ProjectListPage`, `TopBar` |
+| `/api/projects` | GET | `ProjectListPage`, `MenuBar` (project switcher popover), `CommandPalette` |
 | `/api/projects` | POST | `ProjectListPage` (Create / Duplicate) |
 | `/api/projects/{id}` | GET | `useProjectDraft` |
 | `/api/projects/{id}` | PUT | `useProjectDraft` (autosave, `If-Match`) |

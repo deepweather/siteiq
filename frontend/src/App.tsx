@@ -2,14 +2,13 @@
  * App — top-level router.
  *
  * Public:    /, /login, /signup, /forgot-password, /reset-password,
- *            /verify-email, /accept-invite
- * Private:   /app/* (gated by RequireAuth)
- *
- * Every leaf route is code-split via React.lazy. First paint only
- * downloads the router shell + AuthProvider + the route the user
- * actually landed on. Settings pages share a sub-bundle behind their
- * own layout. The fallback is a tiny inline brand splash that matches
- * the design system so route transitions feel coherent.
+ *            /verify-email, /accept-invite, /magic-link
+ * Private:   /app/*  — nested under <AppLayout/>, which mounts the
+ *            shared LiveProvider + Cmd+K palette + global shortcuts.
+ *            Inside it, most routes additionally render under <Chrome/>
+ *            (MenuBar + Sidebar + StatusBar). The editor opts out of
+ *            Chrome because its own three-panel layout needs the whole
+ *            viewport.
  */
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Suspense, lazy, type ReactNode } from 'react';
@@ -25,7 +24,11 @@ const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage = lazy(() => import('./pages/VerifyEmailPage'));
 const AcceptInvitePage = lazy(() => import('./pages/AcceptInvitePage'));
 const MagicLinkPage = lazy(() => import('./pages/MagicLinkPage'));
+
+const AppLayout = lazy(() => import('./shell/AppLayout'));
+const Chrome = lazy(() => import('./shell/Chrome'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Portfolio = lazy(() => import('./components/Portfolio/Portfolio').then((m) => ({ default: m.Portfolio })));
 const ProjectListPage = lazy(() => import('./pages/projects/ProjectListPage'));
 const ProjectEditorPage = lazy(() => import('./pages/projects/ProjectEditorPage'));
 const SettingsLayout = lazy(() => import('./pages/settings/SettingsLayout'));
@@ -71,41 +74,25 @@ export default function App() {
               path="/app"
               element={
                 <RequireAuth>
-                  <Lazy><Dashboard /></Lazy>
-                </RequireAuth>
-              }
-            />
-
-            <Route
-              path="/app/projects"
-              element={
-                <RequireAuth>
-                  <Lazy><ProjectListPage /></Lazy>
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="/app/projects/:id/edit"
-              element={
-                <RequireAuth>
-                  <Lazy><ProjectEditorPage /></Lazy>
-                </RequireAuth>
-              }
-            />
-
-            <Route
-              path="/app/settings"
-              element={
-                <RequireAuth>
-                  <Lazy><SettingsLayout /></Lazy>
+                  <Lazy><AppLayout /></Lazy>
                 </RequireAuth>
               }
             >
-              <Route index element={<Navigate to="account" replace />} />
-              <Route path="account" element={<Lazy><AccountSettings /></Lazy>} />
-              <Route path="team" element={<Lazy><TeamSettings /></Lazy>} />
-              <Route path="orgs" element={<Lazy><OrgSwitcher /></Lazy>} />
-              <Route path="sessions" element={<Lazy><Sessions /></Lazy>} />
+              {/* Editor lives outside Chrome — needs the whole viewport. */}
+              <Route path="projects/:id/edit" element={<Lazy><ProjectEditorPage /></Lazy>} />
+              {/* Everything else renders under Chrome (menu bar, sidebar, status bar). */}
+              <Route element={<Lazy><Chrome /></Lazy>}>
+                <Route index element={<Lazy><Dashboard /></Lazy>} />
+                <Route path="portfolio" element={<Lazy><Portfolio /></Lazy>} />
+                <Route path="projects" element={<Lazy><ProjectListPage /></Lazy>} />
+                <Route path="settings" element={<Lazy><SettingsLayout /></Lazy>}>
+                  <Route index element={<Navigate to="account" replace />} />
+                  <Route path="account" element={<Lazy><AccountSettings /></Lazy>} />
+                  <Route path="team" element={<Lazy><TeamSettings /></Lazy>} />
+                  <Route path="orgs" element={<Lazy><OrgSwitcher /></Lazy>} />
+                  <Route path="sessions" element={<Lazy><Sessions /></Lazy>} />
+                </Route>
+              </Route>
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

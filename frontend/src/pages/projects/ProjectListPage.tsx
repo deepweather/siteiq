@@ -1,18 +1,13 @@
 /**
- * Project list — the entry point for the editor.
+ * Project list — full-screen takeover with two sections:
+ *   "My projects" — org-owned, editable.
+ *   "Stock templates" — public seeds, read-only here. Duplicate to fork.
  *
- * Layout:
- *  - "My projects" — org-owned, editable.
- *  - "Templates" — public stock seeds. Read-only here, but can be
- *    duplicated to make a new org-owned project.
- *
- * Create + duplicate go through an inline modal (rather than
- * `window.prompt`) so the flow works in every browser context
- * (embedded webviews, automated tests, etc.) and doesn't look like
- * a 1998 prompt() popup.
+ * Create + duplicate go through an inline modal so the flow works in
+ * every browser context, no window.prompt().
  */
 import { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   type ProjectListItem,
   type ProjectDocument,
@@ -23,6 +18,7 @@ import {
   getProject,
 } from '../../services/projectsApi';
 import { useAuth } from '../../lib/auth/AuthProvider';
+import { useLive } from '../../shell/useLive';
 
 type ModalState =
   | { kind: 'new' }
@@ -32,6 +28,7 @@ type ModalState =
 export default function ProjectListPage() {
   const nav = useNavigate();
   const { org } = useAuth();
+  const live = useLive();
   const [items, setItems] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +54,6 @@ export default function ProjectListPage() {
     setError(null);
     try {
       const doc = blankProjectDocument(slug, name);
-      // Seed with one zone so the editor opens with something on screen.
       doc.zones = [{
         id: 'z1', label: 'Zone 1', x: 10, y: 10, width: 60, height: 50,
         phase: 'structural', phase_progress: 0.5, level_id: 'L0',
@@ -76,11 +72,7 @@ export default function ProjectListPage() {
     setError(null);
     try {
       const src = await getProject(source.id);
-      const cloned: ProjectDocument = {
-        ...src.document,
-        slug,
-        name,
-      };
+      const cloned: ProjectDocument = { ...src.document, slug, name };
       const detail = await createProject(cloned, { message: `Duplicated from ${source.slug}` });
       nav(`/app/projects/${detail.id}/edit`);
     } catch (e: unknown) {
@@ -91,9 +83,6 @@ export default function ProjectListPage() {
   };
 
   const onActivate = async (item: ProjectListItem) => {
-    // Idempotent UX: if the project is already active, just jump back to
-    // the dashboard rather than calling activate (which audit-logs +
-    // rebuilds the engine, losing applied-recommendation state).
     if (item.is_active) {
       nav('/app');
       return;
@@ -101,6 +90,7 @@ export default function ProjectListPage() {
     setBusy(true);
     try {
       await activateProject(item.id);
+      live.reload();
       nav('/app');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'activate failed');
@@ -112,7 +102,7 @@ export default function ProjectListPage() {
   const templates = items.filter((p) => !p.is_owner);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex-1 overflow-y-auto bg-background">
       <header className="px-6 py-4 border-b border-border flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-foreground">Projects</h1>
@@ -121,12 +111,6 @@ export default function ProjectListPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Link
-            to="/app"
-            className="px-3 py-1.5 text-xs font-medium rounded border border-border hover:bg-secondary"
-          >
-            Back to dashboard
-          </Link>
           {isOwnerRole && (
             <button
               type="button"
@@ -305,9 +289,6 @@ function ProjectModal({ title, submitLabel, initialSlug, initialName, busy, exis
   const [name, setName] = useState(initialName);
   const [touched, setTouched] = useState({ slug: false, name: false });
 
-  // Cheap inline validation: lowercase letters, digits, dashes, no leading
-  // dash. Mirrors the server's slug constraint so users don't get a 400
-  // surprise after submitting.
   const slugValid = /^[a-z][a-z0-9-]*$/.test(slug);
   const slugTaken = existingSlugs.includes(slug);
   const nameValid = name.trim().length > 0;
@@ -327,7 +308,6 @@ function ProjectModal({ title, submitLabel, initialSlug, initialName, busy, exis
     await onSubmit(slug.trim(), name.trim());
   };
 
-  // Initial form has no name? Auto-fill from slug.
   useEffect(() => {
     if (!name && slug) setName(slug);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -404,9 +384,6 @@ function ProjectModal({ title, submitLabel, initialSlug, initialName, busy, exis
   );
 }
 
-/** Generate a slug that isn't in `taken`. Appends `-2`, `-3`, … until
- *  a slot opens. Keeps the duplicate-modal pre-filled with something
- *  that won't 409 on submit. */
 function uniqueSlug(base: string, taken: string[]): string {
   if (!taken.includes(base)) return base;
   let i = 2;

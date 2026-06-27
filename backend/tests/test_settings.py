@@ -8,8 +8,10 @@ from settings import Settings
 
 def test_defaults_match_previous_hardcoded_values():
     """Out-of-the-box settings must reproduce the legacy behavior so no
-    operational surprises."""
-    s = Settings()
+    operational surprises. We pass `_env_file=None` so the local
+    `backend/.env` a developer might use to run the dev server doesn't
+    leak into the hardcoded-defaults assertion."""
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
     assert s.cors_origins == ["http://localhost:5173", "http://localhost:5174"]
     assert s.default_project_id == "westhafen"
     assert s.log_level == "INFO"

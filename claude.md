@@ -125,9 +125,9 @@ every `SITEIQ_*` knob). In dev mode the verification + reset emails are
 persisted to the `email_outbox` table and visible at
 `http://localhost:8000/dev/outbox` — no SMTP setup needed.
 
-Camera feeds require .mp4 files in `backend/vision/videos/`. Two Pexels
-CC0 videos are downloaded but gitignored. YOLO weights (`yolov8n.pt`)
-auto-download on first run.
+Camera feeds require .mp4 files in `backend/vision/videos/`. Three Pexels
+CC0 construction-site videos are downloaded but gitignored. YOLO weights
+(`yolov8n.pt`) auto-download on first run.
 
 ## Design principles (do not violate)
 
@@ -677,23 +677,100 @@ version drift and rebuilds the engine on the new document.
 
 ## Frontend modules
 
-### State management
-- `App.tsx` is a `BrowserRouter`. Simulation app body lives in
-  `pages/Dashboard.tsx`, mounted at `/app` behind `<RequireAuth>`.
-- `lib/auth/AuthProvider` — context that boots via `GET /auth/me`,
-  exposes `useAuth()` (`status`, `user`, `org`, `memberships`, `refresh`,
-  `setMe`). `RequireAuth` redirects to `/login?next=…`; `RequireRole`
-  shows an "Access denied" panel below threshold.
-- `useWebSocket` — connects to `${WS_BASE}/ws`, stores assets + trails
+### Desktop shell (`src/shell/`)
+
+Every `/app/*` route is nested under a two-layer shell:
+
+```
+<RequireAuth>
+  <AppLayout>                      // shell/AppLayout.tsx
+    <LiveProvider>                 // shell/LiveContext.tsx — single WS+sim
+                                   //   shared across every /app/* route
+      <CommandPalette/>            // shell/CommandPalette.tsx — ⌘K overlay
+      <Outlet/>                    // route children below
+    </LiveProvider>
+  </AppLayout>
+</RequireAuth>
+
+  <Chrome>                         // shell/Chrome.tsx — persistent chrome
+    <MenuBar/>                     //   shell/MenuBar.tsx — top row
+    <Sidebar/>                     //   shell/Sidebar.tsx — 52 px icon rail
+    <main><Outlet/></main>         //   page body (Dashboard / Portfolio / …)
+    <StatusBar/>                   //   shell/StatusBar.tsx — bottom strip
+  </Chrome>
+```
+
+- **`AppLayout.tsx`** — outermost wrapper for `/app/*`. Mounts the
+  `LiveProvider` (one WebSocket + one `/api/site` fetch + one
+  recommendations poll per session, survives navigation between Dashboard
+  / Portfolio / Editor / Settings). Wipes the legacy
+  `localStorage.siteiq.shell.v1` key from the abandoned tab-shell on
+  mount, registers `Cmd+K` / `Cmd+,` shortcuts.
+- **`Chrome.tsx`** — visual shell. Renders `MenuBar` at top, `Sidebar`
+  on the left, page `<Outlet/>` in the middle, `StatusBar` at bottom.
+  Used for Dashboard / Portfolio / ProjectListPage / Settings. The
+  editor opts out (full viewport for its own three-panel layout).
+- **`LiveContext.tsx` + `useLive.ts`** — the live-data context.
+  Provider lives in the `.tsx` for hot-reload friendliness; the hook +
+  context object live in the `.ts` so the `.tsx` exports only a
+  component. Exposes `assetsRef`, `trailsRef`, `cabsRef`, `analytics`,
+  `currentWaste`, `baselineWaste`, `savings`, `recommendations`,
+  `setRecommendations`, `speed`, `paused`, `setSpeed`, `togglePaused`,
+  `switchProject(slug)`, `reload()`, `recentApply`, `setRecentApply`,
+  `refreshRecommendations()`.
+- **`MenuBar.tsx`** — single top row, ~36 px. Brand badge ·
+  `Site` / `View` / `Account` / `Help` dropdowns · project switcher
+  popover (clickable project name, lists projects with an active dot) ·
+  sim clock (`Day N · HH:MM`) · pause toggle · 1×/2×/5×/10× speed pills ·
+  connection dot · `⌘K` button.
+- **`Sidebar.tsx`** — 52 px icon rail, always visible. Five targets:
+  Dashboard / Portfolio / Projects / Settings + a bottom `⌘K` button.
+  Icon-only by design so the canvas keeps maximum horizontal real estate.
+  Active route gets the primary-coloured highlight.
+- **`StatusBar.tsx`** — 24 px bottom strip. Workspace cell · pending recs
+  + monthly recoverable € · current monthly waste · build version. Cells
+  are clickable jump-points (workspace → `/app/settings/orgs`, pending
+  → opens palette).
+- **`CommandPalette.tsx`** — `Cmd+K` overlay. Verbs: switch project,
+  apply recommendation by name, set speed, pause/resume, go to
+  Dashboard / Portfolio / Projects / Editor / Settings, Sign out.
+  Arrow keys + Enter navigate, Esc closes. Registers itself via
+  `keyboard.registerPaletteControls` so the top bar's `⌘K` button +
+  the shortcut fire the same handler.
+- **`keyboard.ts`** — global shortcut binding. Just `Cmd+K` (palette)
+  and `Cmd+,` (settings). Exposes `openPalette()` / `closePalette()`
+  for the menu bar and sidebar to call.
+
+### Routes (`App.tsx`)
+
+```
+/                         landing
+/login /signup /forgot-password /reset-password /verify-email
+/accept-invite /magic-link   public auth flow
+
+/app                      → <AppLayout> wraps everything below
+  projects/:id/edit       → <ProjectEditorPage>  (no Chrome — full viewport)
+  (otherwise)             → <Chrome> wraps:
+      index               → <Dashboard>
+      portfolio           → <Portfolio>
+      projects            → <ProjectListPage>
+      settings/*          → <SettingsLayout>  (nested NavLink + Outlet)
+```
+
+### State
+
+- **`useWebSocket`** — connects to `${WS_BASE}/ws`, stores assets + trails
   in **refs** (not state) for canvas performance. Only analytics, simTime,
   simDay trigger React re-renders. Reconnect guard skips OPEN *or*
   CONNECTING sockets.
-- `useSimulation` — fetches `/api/site` on mount. `reload()` re-fetches
+- **`useSimulation`** — fetches `/api/site` on mount. `reload()` re-fetches
   after project switch.
-- `useAnalytics` — captures first analytics as baseline, computes
+- **`useAnalytics`** — captures first analytics as baseline, computes
   savings delta. `resetBaseline()` clears on project switch.
-- `Dashboard.tsx` resets selection / recs / baseline whenever the active
-  org id changes.
+- **`lib/auth/AuthProvider`** — context that boots via `GET /auth/me`,
+  exposes `useAuth()` (`status`, `user`, `org`, `memberships`, `refresh`,
+  `setMe`). `RequireAuth` redirects to `/login?next=…`; `RequireRole`
+  shows an "Access denied" panel below threshold.
 
 ### `services/api.ts`
 Extends `getJson` / `postJson` with `credentials: 'include'` and an
@@ -766,15 +843,23 @@ regular `renderFrame` — zero cost when iso is off. `resetIsoSlabs()`
 clears the cache on project switch.
 
 ### Right panel
-Tabbed: Waste / Optimize / Timeline. Asset detail replaces tabs when
-an asset is selected.
+Two modes, no tabs:
+  - default → `WasteReport` (the cost story).
+  - selected asset → `AssetDetail`.
 
-- **WasteReport** — Red "RECOVERABLE WASTE" hero with monthly + daily
-  framing. ROI card (system cost €2K/mo vs savings, payback ratio).
-  "Included at no extra cost" card showing BauWatch/PPE/Buildots
-  replacements. Three expandable cost rows with zone/equipment
-  breakdowns. Green CTA "Apply optimizations — recover €X/mo" links to
-  Optimize tab. Vertical-transport row rendered only when > 0.
+`WasteReport` ordering (top → bottom): hero red number (monthly recoverable
+waste, JetBrains Mono, animated) → "EUR X lost every day this layout
+stays unchanged" subtext → compact ROI strip (cost / payback / annual
+net) → **big green Apply optimisations CTA** with the recovered euros
+inside it + inline expander revealing the per-rec list →
+"What's bleeding" rows (toilet walks / equipment idle / materials /
+vertical transport / shoring compliance) → "Included at no extra cost"
+vendor-replacement panel at the bottom.
+
+The previous Waste/Optimize/Timeline tab framing is gone — Timeline
+content lives in the editor's Schedule tab where it semantically
+belongs, and Recommendations are folded into the Apply CTA's inline
+expander so the cost story stays the dominant rail.
 - **Recommendations** — "Available Savings" banner with monthly + annual
   total. "Apply All N Optimizations" button with spinner state.
   Individual rec cards with Apply buttons. Post-apply celebration card
@@ -790,10 +875,11 @@ an asset is selected.
   distance. Activity log with sim-clock timestamps.
 
 ### `Portfolio.tsx`
-Full-screen view showing all project templates. Summary cards (sites,
-workers, equipment, waste). Portfolio ROI banner using
+Routed page (`/app/portfolio`) rendered inside `<Chrome>`. Summary cards
+(sites, workers, equipment, waste). Portfolio ROI banner using
 `RECOVERABLE_WASTE_FRACTION = 0.55` + `SYSTEM_COST_PER_SITE = 2000`.
-Per-site cards with Open Site button that triggers project switch.
+Per-site cards with Open Site button that calls
+`useLive().switchProject(slug)` and navigates back to `/app`.
 
 ### `pages/settings/*`
 Account (change password, resend verification, delete account), Team

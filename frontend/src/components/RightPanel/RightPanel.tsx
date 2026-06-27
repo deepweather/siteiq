@@ -1,19 +1,31 @@
-import { useState } from 'react';
+/**
+ * RightPanel — the dashboard's secondary surface.
+ *
+ * Two modes, no tabs:
+ *   - default: WasteReport (the cost story + Apply CTA).
+ *   - selected asset: AssetDetail (worker / equipment / facility / material).
+ *
+ * The right rail is narrow on small viewports so the canvas keeps as
+ * much horizontal real estate as possible: 320 px below 1280 px, 380 px
+ * above. Apply CTA stays prominent at either width.
+ */
+
+import { useEffect, useState } from 'react';
 import type { WasteSummary, Recommendation } from '../../types/analytics';
 import type { ScheduleEntry, Zone } from '../../types/site';
 import { WasteReport } from './WasteReport';
-import { Recommendations } from './Recommendations';
-import { Timeline } from './Timeline';
 import { AssetDetail } from './AssetDetail';
 
 interface RightPanelProps {
   waste: WasteSummary | null;
   baseline: WasteSummary | null;
   savings: { toilet: number; material: number; equipment: number; total: number } | null;
-  pendingSavingsMonthly: number;
-  schedule: ScheduleEntry[];
+  /** Kept for prop compatibility with Dashboard. Timeline content now
+   *  lives in the editor's Schedule tab; the dashboard rail does not
+   *  surface it. The dashboard wires through `[]` to be explicit. */
+  schedule?: ScheduleEntry[];
   zones: Zone[];
-  currentDay: number;
+  currentDay?: number;
   recommendations: Recommendation[];
   onRecsChange: (recs: Recommendation[]) => void;
   onApplied?: (rec: Recommendation) => void;
@@ -21,19 +33,35 @@ interface RightPanelProps {
   onAssetDeselect: () => void;
 }
 
-type Tab = 'waste' | 'recs' | 'timeline';
+export function RightPanel({
+  waste, baseline, savings, zones, recommendations,
+  onRecsChange, onApplied, selectedAssetId, onAssetDeselect,
+}: RightPanelProps) {
+  const [narrow, setNarrow] = useState(
+    typeof window === 'undefined' ? false : window.innerWidth < 1280,
+  );
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < 1280);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
-export function RightPanel({ waste, baseline, savings, pendingSavingsMonthly, schedule, zones, currentDay, recommendations, onRecsChange, onApplied, selectedAssetId, onAssetDeselect }: RightPanelProps) {
-  const [activeTab, setActiveTab] = useState<Tab>('waste');
-
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'waste', label: 'Waste' },
-    { id: 'recs', label: 'Optimize' },
-    { id: 'timeline', label: 'Timeline' },
-  ];
+  // Esc deselects whatever's selected — keeps the keyboard story
+  // consistent with the rest of the app.
+  useEffect(() => {
+    if (!selectedAssetId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onAssetDeselect();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [selectedAssetId, onAssetDeselect]);
 
   return (
-    <div className="w-[380px] shrink-0 bg-card border-l border-border flex flex-col h-full shadow-sm">
+    <div
+      className="shrink-0 bg-card border-l border-border flex flex-col h-full shadow-sm"
+      style={{ width: narrow ? 320 : 380 }}
+    >
       {selectedAssetId ? (
         <>
           <div className="flex items-center justify-between border-b border-border shrink-0 px-3 py-2.5">
@@ -50,46 +78,17 @@ export function RightPanel({ waste, baseline, savings, pendingSavingsMonthly, sc
           </div>
         </>
       ) : (
-        <>
-          <div className="flex border-b border-border shrink-0">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 py-3 text-xs font-medium border-b-2 ${
-                  activeTab === tab.id
-                    ? 'text-primary border-primary'
-                    : 'text-muted-foreground border-transparent hover:text-foreground'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1 overflow-y-auto p-3">
-            {activeTab === 'waste' && (
-              <WasteReport
-                waste={waste}
-                baseline={baseline}
-                savings={savings}
-                pendingSavingsMonthly={pendingSavingsMonthly}
-                zones={zones}
-                onSwitchToOptimize={() => setActiveTab('recs')}
-              />
-            )}
-            {activeTab === 'recs' && (
-              <Recommendations
-                recommendations={recommendations}
-                onRecsChange={onRecsChange}
-                onApplied={onApplied}
-                zones={zones}
-              />
-            )}
-            {activeTab === 'timeline' && (
-              <Timeline schedule={schedule} currentDay={currentDay} zones={zones} />
-            )}
-          </div>
-        </>
+        <div className="flex-1 overflow-y-auto p-3">
+          <WasteReport
+            waste={waste}
+            baseline={baseline}
+            savings={savings}
+            zones={zones}
+            recommendations={recommendations}
+            onRecsChange={onRecsChange}
+            onApplied={onApplied}
+          />
+        </div>
       )}
     </div>
   );

@@ -1,11 +1,11 @@
 /**
- * Project editor.
+ * Project editor — full-screen takeover.
  *
  * Layout:
- *  - Left sidebar: tool palette + level manager.
+ *  - Top bar: project name + save status + activate/preview + back links.
+ *  - Left: tool palette + level manager + site-size editor.
  *  - Centre: editor canvas.
- *  - Right sidebar: properties panel + validation issues.
- *  - Top bar: project name + save status + activate-now button.
+ *  - Right: properties / schedule tabs + validation overlay.
  */
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
@@ -18,6 +18,7 @@ import { EditorCanvas } from '../../components/editor/EditorCanvas';
 import { ValidationOverlay } from '../../components/editor/ValidationOverlay';
 import { PreviewRunPanel } from '../../components/editor/PreviewRunPanel';
 import { ScheduleEditor } from '../../components/editor/ScheduleEditor';
+import { useLive } from '../../shell/useLive';
 
 const DEFAULT_LEVEL_ID = 'L0';
 
@@ -32,36 +33,25 @@ const TOOL_TO_EQUIPMENT: Record<string, string | null> = {
   'add-pump': 'concrete_pump',
   'add-excavator': 'excavator',
   'add-sheet-pile': 'sheet_pile',
-  // Dewatering pumps cycle through operate/idle states (handled by
-  // `tiefbau_behavior.update_tiefbau_equipment`), so they live in the
-  // `equipment` list — not `facilities`. The seed (munich-sewer.json)
-  // already puts them there; the editor must match.
   'add-dewatering-pump': 'dewatering_pump',
 };
 
 export default function ProjectEditorPage() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
+  const live = useLive();
   const draft = useProjectDraft(id ?? null);
   const [tool, setTool] = useState<EditorTool>('select');
   const [activeLevel, setActiveLevel] = useState<string>(DEFAULT_LEVEL_ID);
   const [selection, setSelection] = useState<EditorSelection>(null);
-  // Mount-key for the preview panel. Bumping forces a fresh
-  // `<PreviewRunPanel>` instance (and thus a fresh API call). Null
-  // means the panel is closed.
   const [previewKey, setPreviewKey] = useState<number | null>(null);
   const [rightTab, setRightTab] = useState<'properties' | 'schedule'>('properties');
-  // Stale-detection counter for the preview panel: bumps once per
-  // distinct `draft.document` reference. The panel captures this value
-  // when its run completes and auto-dismisses when it diverges later.
-  // Tracked as state (+ useEffect) rather than a ref so the React
-  // Compiler can see the read site as pure.
   const [docVersion, setDocVersion] = useState(0);
+
   useEffect(() => {
     setDocVersion((v) => v + 1);
   }, [draft.document]);
 
-  // Always default the active level to one that exists in the document.
   useEffect(() => {
     if (!draft.document) return;
     if (!draft.document.levels.some((lv) => lv.id === activeLevel)) {
@@ -91,9 +81,6 @@ export default function ProjectEditorPage() {
       return;
     }
     if (tool === 'add-stair' || tool === 'add-elevator') {
-      // For multi-level connections, only the *current* level is the
-      // first node. The user can extend `nodes` from the properties
-      // panel for now. (Multi-level wizards are Phase 9 polish.)
       draft.patch((d) => {
         const id = nextId(d.connections, tool === 'add-stair' ? 'stair' : 'lift');
         const kind = tool === 'add-stair' ? 'stair' : 'elevator';
@@ -135,11 +122,10 @@ export default function ProjectEditorPage() {
   const onActivate = async () => {
     if (!id) return;
     await activateProject(id, draft.savedVersionId || undefined);
+    live.reload();
     nav('/app');
   };
 
-  /** Commit a drag's final position to the document. One patch per
-   *  drag → one undo step. */
   const onMoveSelection = (
     kind: 'zone' | 'facility' | 'equipment' | 'material' | 'connection',
     assetId: string,
@@ -156,8 +142,6 @@ export default function ProjectEditorPage() {
         case 'material':
           return { ...d, materials: d.materials.map((m) => m.id === assetId ? { ...m, x: pos.x, y: pos.y } : m) };
         case 'connection':
-          // Move only this connection's anchor on the active level —
-          // the other endpoints (on other levels) stay where they are.
           return {
             ...d,
             connections: d.connections.map((c) => {
@@ -188,8 +172,15 @@ export default function ProjectEditorPage() {
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       <header className="px-4 py-2.5 border-b border-border flex items-center gap-3 shrink-0">
+        <button
+          type="button"
+          onClick={() => nav('/app')}
+          className="text-xs px-2 py-1 rounded border border-border hover:bg-secondary"
+        >
+          ← Dashboard
+        </button>
         <Link to="/app/projects" className="text-xs px-2 py-1 rounded border border-border hover:bg-secondary">
-          ← Projects
+          Projects
         </Link>
         <input
           type="text"

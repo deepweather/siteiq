@@ -47,6 +47,64 @@ export function kindIcon(kind: string): string {
   return '📝';
 }
 
+const SUBJECT_LABELS: Record<string, string> = {
+  worker: 'Workers',
+  equipment: 'Equipment',
+  material: 'Materials',
+  zone: 'Zones',
+  inspection: 'Inspections',
+  incident: 'Incidents',
+  delivery: 'Deliveries',
+  optimization: 'Optimisations',
+  site: 'Site',
+};
+
+export function subjectTypeLabel(type: string): string {
+  return SUBJECT_LABELS[type] ?? type;
+}
+
+export function subjectIcon(type: string): string {
+  switch (type) {
+    case 'worker':
+      return '👷';
+    case 'equipment':
+      return '🏗️';
+    case 'material':
+      return '📦';
+    case 'zone':
+      return '🗺️';
+    case 'inspection':
+      return '✅';
+    case 'incident':
+      return '⚠️';
+    case 'optimization':
+      return '💡';
+    default:
+      return '📍';
+  }
+}
+
+const METRIC_LABELS: Record<string, string> = {
+  total_hours: 'Total hours',
+  walking_hours: 'Walking hours',
+  days_logged: 'Days logged',
+  idle_hours: 'Idle hours',
+  active_hours: 'Active hours',
+  utilization: 'Utilization',
+  delivered_qty: 'Delivered',
+  consumed_qty: 'Consumed',
+};
+
+export function metricLabel(key: string): string {
+  return METRIC_LABELS[key] ?? key.replace(/_/g, ' ');
+}
+
+export function metricValue(key: string, value: number): string {
+  if (key === 'utilization') return `${Math.round(value * 100)}%`;
+  if (key.endsWith('hours')) return `${value}h`;
+  return String(value);
+}
+
 /** Tailwind classes for a source provenance badge. */
 export function sourceClasses(source: string): string {
   switch (source) {

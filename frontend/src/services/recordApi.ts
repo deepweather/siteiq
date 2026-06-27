@@ -46,6 +46,16 @@ export interface DayRollup {
   event_count: number;
 }
 
+export interface SubjectRow {
+  subject_type: string;
+  subject_id: string;
+  descriptor: string | null;
+  last_state: string | null;
+  event_count: number;
+  last_seen: string | null;
+  pending: number;
+}
+
 export interface EntityProjection {
   subject_type: string;
   subject_id: string;
@@ -152,6 +162,10 @@ export const recordApi = {
   getTimeline: (date?: string) =>
     getJson<{ date: string | null; events: SiteEventDTO[] }>(
       `/api/record/timeline${qs({ date })}`,
+    ),
+  listSubjects: (type?: string, q?: string) =>
+    getJson<{ subjects: SubjectRow[]; counts: Record<string, number>; project_id: string }>(
+      `/api/record/subjects${qs({ type, q })}`,
     ),
   getEntity: (subjectType: string, subjectId: string) =>
     getJson<EntityProjection>(

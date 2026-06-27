@@ -35,7 +35,12 @@ from services.capture import CaptureParser
 from services.cost_engine import compute_costs
 from services.demo_record_generator import RECORD_BACKFILL_DAYS, generate_demo_history
 from services.event_ledger import EventLedger, EventStatusValue
-from services.record_projections import daily_rollup, entity_projection, event_to_dict
+from services.record_projections import (
+    daily_rollup,
+    entity_projection,
+    event_to_dict,
+    list_subjects,
+)
 from services.record_query import QueryAnswer, QueryResponder
 from state.source import SiteStateSource
 
@@ -171,6 +176,40 @@ async def get_timeline(
         org.id, src.project_id, since=since, until=until, order="asc", limit=5000
     )
     return {"date": date, "events": [event_to_dict(r) for r in rows]}
+
+
+@router.get("/subjects")
+async def list_directory(
+    type: str | None = None,
+    q: str | None = None,
+    org: Org = Depends(get_current_org),
+    src: SiteStateSource = Depends(get_source),
+    db: AsyncSession = Depends(get_db),
+):
+    """Directory of distinct subjects (workers, equipment, materials, …) for
+    the active stream, with a one-line descriptor + counts. The frontend
+    groups by `subject_type` and filters by free text."""
+    ledger = EventLedger(db)
+    rows = await ledger.query(
+        org.id, src.project_id,
+        subject_type=type,
+        statuses=[EventStatusValue.CONFIRMED, EventStatusValue.PROPOSED],
+        order="asc", limit=200000,
+    )
+    subjects = list_subjects(rows)
+    if q:
+        needle = q.lower()
+        subjects = [
+            s for s in subjects
+            if needle in s["subject_id"].lower()
+            or (s["descriptor"] and needle in s["descriptor"].lower())
+        ]
+    # Counts per type for the category chips (computed over the unfiltered set
+    # when no type filter is applied).
+    counts: dict[str, int] = {}
+    for s in subjects:
+        counts[s["subject_type"]] = counts.get(s["subject_type"], 0) + 1
+    return {"subjects": subjects, "counts": counts, "project_id": src.project_id}
 
 
 @router.get("/entities/{subject_type}/{subject_id}")

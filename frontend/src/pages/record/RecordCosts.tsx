@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { recordApi, type CostBreakdown } from '../../services/recordApi';
+import { isNavigableSubject, useEntityNav } from './entityNav';
 import { eur } from './format';
 
 /** Costs as a projection over the ledger. Every figure traces to events. */
 export default function RecordCosts({ refreshKey }: { refreshKey: number }) {
+  const openEntity = useEntityNav();
   const [costs, setCosts] = useState<CostBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -101,20 +103,34 @@ export default function RecordCosts({ refreshKey }: { refreshKey: number }) {
           {costs.lines
             .filter((l) => l.category !== 'labor_waste')
             .slice(0, 200)
-            .map((l, i) => (
-              <div key={i} className="px-4 py-2 flex items-center gap-3 text-sm">
-                <div className="flex-1 min-w-0">
-                  <div className="truncate">{l.label}</div>
-                  <div className="text-[11px] font-mono text-muted-foreground/70">
-                    {l.category}
-                    {l.occurred_on ? ` · ${l.occurred_on}` : ''}
-                    {l.zone_id ? ` · ${l.zone_id}` : ''} ·{' '}
-                    {l.supporting_event_ids.length} evt
+            .map((l, i) => {
+              const navigable =
+                !!l.subject_type && !!l.subject_id && isNavigableSubject(l.subject_type);
+              return (
+                <div key={i} className="px-4 py-2 flex items-center gap-3 text-sm">
+                  <div className="flex-1 min-w-0">
+                    {navigable ? (
+                      <button
+                        type="button"
+                        onClick={() => openEntity(l.subject_type!, l.subject_id!)}
+                        className="truncate text-left hover:text-primary hover:underline block w-full"
+                      >
+                        {l.label}
+                      </button>
+                    ) : (
+                      <div className="truncate">{l.label}</div>
+                    )}
+                    <div className="text-[11px] font-mono text-muted-foreground/70">
+                      {l.category}
+                      {l.occurred_on ? ` · ${l.occurred_on}` : ''}
+                      {l.zone_id ? ` · ${l.zone_id}` : ''} ·{' '}
+                      {l.supporting_event_ids.length} evt
+                    </div>
                   </div>
+                  <div className="font-mono tabular-nums shrink-0">{eur(l.amount)}</div>
                 </div>
-                <div className="font-mono tabular-nums shrink-0">{eur(l.amount)}</div>
-              </div>
-            ))}
+              );
+            })}
         </div>
       </div>
     </div>

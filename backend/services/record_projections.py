@@ -107,6 +107,57 @@ def entity_projection(subject_type: str, subject_id: str, events: list) -> dict:
     }
 
 
+# Payload fields that best describe a subject, in priority order, used to
+# build a one-line descriptor for the directory list.
+_DESCRIPTOR_KEYS = ("trade", "subtype", "result", "severity")
+
+
+def list_subjects(events: Iterable) -> list[dict]:
+    """Fold a stream into one row per distinct subject (the directory view).
+
+    Each row: subject_type, subject_id, descriptor (trade/subtype/…),
+    event_count, last_seen, last_state. Confirmed + proposed only; companion
+    `event` subjects are assumed already filtered out by the caller's query.
+    """
+    rows: dict[tuple[str, str], dict] = {}
+    for e in events:
+        status = getattr(e, "status", "confirmed")
+        if status not in ("confirmed", "proposed"):
+            continue
+        key = (e.subject_type, e.subject_id)
+        row = rows.get(key)
+        if row is None:
+            row = {
+                "subject_type": e.subject_type,
+                "subject_id": e.subject_id,
+                "descriptor": None,
+                "last_state": None,
+                "event_count": 0,
+                "last_seen": None,
+                "pending": 0,
+            }
+            rows[key] = row
+        row["event_count"] += 1
+        if status == "proposed":
+            row["pending"] += 1
+        occurred = getattr(e, "occurred_at", None)
+        if isinstance(occurred, datetime):
+            if row["last_seen"] is None or occurred.isoformat() > row["last_seen"]:
+                row["last_seen"] = occurred.isoformat()
+        payload = e.payload or {}
+        if row["descriptor"] is None:
+            for k in _DESCRIPTOR_KEYS:
+                if payload.get(k):
+                    row["descriptor"] = str(payload[k])
+                    break
+        if payload.get("state"):
+            row["last_state"] = str(payload["state"])
+
+    out = list(rows.values())
+    out.sort(key=lambda r: (r["subject_type"], r["subject_id"]))
+    return out
+
+
 def daily_rollup(events: Iterable) -> list[dict]:
     """Per-day operational summary across a stream (confirmed events only)."""
     by_day: dict[str, dict] = defaultdict(lambda: {

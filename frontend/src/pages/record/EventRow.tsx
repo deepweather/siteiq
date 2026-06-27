@@ -1,4 +1,5 @@
 import type { SiteEventDTO } from '../../services/recordApi';
+import { isNavigableSubject, useEntityNav } from './entityNav';
 import {
   fmtTime,
   kindIcon,
@@ -14,8 +15,12 @@ interface Props {
   children?: React.ReactNode;
 }
 
-/** One ledger event rendered as a list row. Used by Timeline, Ledger, Inbox. */
+/** One ledger event rendered as a list row. Used by Timeline, Ledger, Inbox,
+ *  and the entity drawer's history. The subject is a link that opens that
+ *  entity's record from anywhere. */
 export function EventRow({ event: e, showDate, children }: Props) {
+  const openEntity = useEntityNav();
+  const navigable = isNavigableSubject(e.subject_type);
   return (
     <div className="px-4 py-3 flex items-start gap-3" data-testid="event-row">
       <div className="text-lg leading-none mt-0.5" aria-hidden="true">
@@ -46,7 +51,21 @@ export function EventRow({ event: e, showDate, children }: Props) {
           {summarizeEvent(e.kind, e.payload)}
         </div>
         <div className="text-[11px] font-mono text-muted-foreground/70 mt-0.5">
-          #{e.seq} · {e.subject_type}:{e.subject_id} ·{' '}
+          #{e.seq} ·{' '}
+          {navigable ? (
+            <button
+              type="button"
+              onClick={() => openEntity(e.subject_type, e.subject_id)}
+              className="hover:text-primary hover:underline"
+            >
+              {e.subject_type}:{e.subject_id}
+            </button>
+          ) : (
+            <span>
+              {e.subject_type}:{e.subject_id}
+            </span>
+          )}{' '}
+          ·{' '}
           {showDate
             ? new Date(e.occurred_at).toLocaleString()
             : fmtTime(e.occurred_at)}

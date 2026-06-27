@@ -1,15 +1,19 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useAuth } from '../../lib/auth/AuthProvider';
 import { recordApi } from '../../services/recordApi';
+import { EntityDrawer } from './EntityDrawer';
+import { EntityNavContext } from './entityNav';
 import RecordAsk from './RecordAsk';
 import RecordCosts from './RecordCosts';
+import RecordDirectory from './RecordDirectory';
 import RecordInbox from './RecordInbox';
 import RecordLedger from './RecordLedger';
 import RecordTimeline from './RecordTimeline';
 
-type Tab = 'timeline' | 'inbox' | 'costs' | 'ledger' | 'ask';
+type Tab = 'directory' | 'timeline' | 'inbox' | 'costs' | 'ledger' | 'ask';
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'directory', label: 'Directory' },
   { id: 'timeline', label: 'Timeline' },
   { id: 'inbox', label: 'Inbox' },
   { id: 'costs', label: 'Costs' },
@@ -23,14 +27,19 @@ export default function RecordPage() {
   const canWrite = role === 'owner' || role === 'admin' || role === 'member';
   const isAdmin = role === 'owner' || role === 'admin';
 
-  const [tab, setTab] = useState<Tab>('timeline');
+  const [tab, setTab] = useState<Tab>('directory');
   const [refreshKey, setRefreshKey] = useState(0);
   const [captureText, setCaptureText] = useState('');
   const [capturing, setCapturing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [entity, setEntity] = useState<{ type: string; id: string } | null>(null);
 
   const bump = () => setRefreshKey((k) => k + 1);
+  const openEntity = useCallback(
+    (type: string, id: string) => setEntity({ type, id }),
+    [],
+  );
 
   const onCapture = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +77,7 @@ export default function RecordPage() {
   };
 
   return (
+    <EntityNavContext.Provider value={openEntity}>
     <div className="flex-1 overflow-auto">
       <div className="max-w-5xl mx-auto px-6 py-6">
         <div className="flex items-start justify-between gap-4 mb-5">
@@ -131,6 +141,7 @@ export default function RecordPage() {
         </div>
 
         <div>
+          {tab === 'directory' && <RecordDirectory refreshKey={refreshKey} />}
           {tab === 'timeline' && <RecordTimeline refreshKey={refreshKey} />}
           {tab === 'inbox' && <RecordInbox canWrite={canWrite} onChanged={bump} />}
           {tab === 'costs' && <RecordCosts refreshKey={refreshKey} />}
@@ -138,6 +149,14 @@ export default function RecordPage() {
           {tab === 'ask' && <RecordAsk />}
         </div>
       </div>
+      {entity && (
+        <EntityDrawer
+          subjectType={entity.type}
+          subjectId={entity.id}
+          onClose={() => setEntity(null)}
+        />
+      )}
     </div>
+    </EntityNavContext.Provider>
   );
 }

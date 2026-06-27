@@ -128,6 +128,30 @@ def test_entity_projection(auth_client):
     assert "total_hours" in proj["metrics"]
 
 
+def test_subjects_directory(auth_client):
+    _generate(auth_client)
+    body = auth_client.get("/api/record/subjects").json()
+    subjects = body["subjects"]
+    assert len(subjects) > 0
+    # Westhafen has 50 workers.
+    workers = [s for s in subjects if s["subject_type"] == "worker"]
+    assert body["counts"]["worker"] == len(workers) == 50
+    assert any(s["subject_type"] == "equipment" for s in subjects)
+    w = workers[0]
+    assert w["descriptor"]  # trade
+    assert w["event_count"] > 0
+
+
+def test_subjects_filter_by_type_and_query(auth_client):
+    _generate(auth_client)
+    only_equipment = auth_client.get("/api/record/subjects?type=equipment").json()
+    assert only_equipment["subjects"]
+    assert all(s["subject_type"] == "equipment" for s in only_equipment["subjects"])
+
+    one = auth_client.get("/api/record/subjects?q=worker-001").json()["subjects"]
+    assert any(s["subject_id"] == "worker-001" for s in one)
+
+
 def test_record_routes_require_auth(client):
     # No session -> 401 envelope.
     r = client.get("/api/record/events")

@@ -15,6 +15,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -329,6 +330,111 @@ class ProjectAsset(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )
+
+
+class EventStatus(str, enum.Enum):
+    """Lifecycle of a single ledger event.
+
+    `confirmed` is ground truth (machine high-confidence or human-vouched).
+    `proposed` is a low-confidence machine guess awaiting confirmation.
+    `rejected` was dismissed by a human. `superseded` was replaced by a
+    later correcting event. Status is a denormalised cache: every change
+    is ALSO recorded as its own `event.confirmed/rejected/superseded`
+    companion event so the append-only log stays the source of truth.
+    """
+
+    PROPOSED = "proposed"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+
+
+class EventSource(str, enum.Enum):
+    """Provenance of a ledger event."""
+
+    SIMULATION = "simulation"
+    GENERATOR = "generator"
+    HUMAN = "human"
+    CAMERA = "camera"
+    SENSOR = "sensor"
+    INTEGRATION = "integration"
+    SYSTEM = "system"
+
+
+class SiteEvent(Base):
+    """Append-only, hash-chained operational ledger entry.
+
+    The system of record. Every action, material, worker and piece on the
+    site becomes one immutable event. Current state and costs are folds
+    over these rows; nothing is mutated except the denormalised `status`
+    cache (whose every change is itself recorded as a companion event).
+
+    Stream key is `(org_id, project_id)`. Within a stream, `seq` is a gap-
+    free monotonic counter and `hash = sha256(prev_hash + canonical(core))`
+    forms a tamper-evident chain. `occurred_at` is valid time (when it
+    happened on site); `recorded_at` is system time (when we learned it),
+    giving the ledger bitemporality for back-dated corrections.
+
+    Source-agnostic by design: the simulation, the demo generator, manual
+    capture, and a future camera `LiveSource` all append through the same
+    `services.event_ledger.EventLedger`.
+    """
+
+    __tablename__ = "site_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id", "project_id", "seq", name="uq_site_events_stream_seq"
+        ),
+        Index(
+            "ix_site_events_stream_occurred",
+            "org_id",
+            "project_id",
+            "occurred_at",
+        ),
+        Index(
+            "ix_site_events_stream_status",
+            "org_id",
+            "project_id",
+            "status",
+        ),
+        Index("ix_site_events_subject", "subject_type", "subject_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
+    )
+    # Stream key within the org. Holds the engine's `project_id` (seed slug
+    # or project uuid) so the ledger lines up with the active simulation
+    # without a hard cross-tenant FK to `projects`.
+    project_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    subject_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    source: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=EventSource.SYSTEM.value
+    )
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    evidence_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=EventStatus.CONFIRMED.value
+    )
+    supersedes_event_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    actor_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class ProjectVersion(Base):

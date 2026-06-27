@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import sys
+from collections import defaultdict
 
 # Ensure the backend directory is on the path for local imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,6 +31,7 @@ from api.dev import router as dev_router
 from api.health import router as health_router
 from api.projects import router as projects_router
 from api.project_assets import router as project_assets_router
+from api.record import router as record_router
 from api.request_id import RequestIdMiddleware
 from api.routes import router as api_router
 from api.security_headers import SecurityHeadersMiddleware
@@ -40,12 +42,18 @@ from auth.email_sender import build_sender_from_settings
 from auth.outbox_cleanup import run_cleanup_loop as run_outbox_cleanup
 from auth.rate_limit import configure_storage, limiter, rate_limit_handler
 from auth.routes import router as auth_router
-from config import ANALYTICS_UPDATE_INTERVAL, SIM_TICK_INTERVAL
+from config import ANALYTICS_UPDATE_INTERVAL, EVENT_DRAIN_INTERVAL, SIM_TICK_INTERVAL
 from db.engine import create_db_engine
 import logging_config
+from models.cost import default_rate_card
+from models.site_event import EventEnvelope
 from orgs.routes import router as orgs_router
 from seeds.importer import import_seed_projects
+from services.capture import build_capture_parser_from_settings
+from services.event_ledger import EventLedger
 from services.portfolio_estimator import compute_all_estimates
+from services.record_query import build_query_responder_from_settings
+from services.sim_calendar import sim_to_datetime
 from settings import Settings, get_settings
 from state.registry import make_registry, run_loops_for_registry
 from vision.detector import VideoDetector
@@ -79,6 +87,58 @@ async def _run_analytics_loop(app: FastAPI) -> None:
         await asyncio.sleep(ANALYTICS_UPDATE_INTERVAL)
 
 
+def _raw_to_envelope(org_id: str, raw: dict) -> EventEnvelope:
+    """Convert a buffered engine event into a ledger envelope, mapping the
+    sim clock to a calendar `occurred_at`."""
+    return EventEnvelope(
+        org_id=org_id,
+        project_id=raw["project_id"],
+        subject_type=raw["subject_type"],
+        subject_id=raw["subject_id"],
+        kind=raw["kind"],
+        occurred_at=sim_to_datetime(raw["sim_day"], raw["sim_time"]),
+        payload=raw["payload"],
+        source=raw["source"],
+        confidence=raw["confidence"],
+        status="confirmed",
+    )
+
+
+async def _run_event_drain_loop(app: FastAPI) -> None:
+    """Background task: flush every live engine's buffered operational
+    events into the ledger every EVENT_DRAIN_INTERVAL s. This is the
+    source-agnostic ingestion path — the simulation feeds it today, a
+    future camera LiveSource feeds the same `EventLedger.append_many`."""
+    while True:
+        registry = getattr(app.state, "registry", None)
+        factory = getattr(app.state, "db_session_factory", None)
+        if registry is None or factory is None:
+            await asyncio.sleep(EVENT_DRAIN_INTERVAL)
+            continue
+        from simulation.event_emit import drain as drain_events
+        for org_id, engine in registry.items():
+            raw_events = drain_events(engine)
+            if not raw_events:
+                continue
+            # Group by stream (project_id) so a mid-batch project switch
+            # never mixes streams in one chained append.
+            by_stream: dict[str, list[dict]] = defaultdict(list)
+            for r in raw_events:
+                by_stream[r["project_id"]].append(r)
+            try:
+                async with factory() as session:
+                    ledger = EventLedger(session)
+                    for raws in by_stream.values():
+                        envs = [_raw_to_envelope(org_id, r) for r in raws]
+                        await ledger.append_many(envs)
+                    await session.commit()
+            except Exception:
+                logger.exception(
+                    "event_drain_failed", extra={"org_id": org_id}
+                )
+        await asyncio.sleep(EVENT_DRAIN_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings: Settings = app.state.settings
@@ -90,6 +150,11 @@ async def lifespan(app: FastAPI):
 
     # ---- Email ----
     app.state.email_sender = build_sender_from_settings(settings)
+
+    # ---- System of record (capture + query seams + rate card) ----
+    app.state.capture_parser = build_capture_parser_from_settings(settings)
+    app.state.query_responder = build_query_responder_from_settings(settings)
+    app.state.rate_card = default_rate_card()
 
     # ---- Rate limit ----
     # Module-level singleton so the @limiter.limit decorators on auth
@@ -131,6 +196,7 @@ async def lifespan(app: FastAPI):
         run_loops_for_registry(registry, tick_interval=SIM_TICK_INTERVAL)
     )
     analytics_task = asyncio.create_task(_run_analytics_loop(app))
+    event_drain_task = asyncio.create_task(_run_event_drain_loop(app))
     outbox_task = asyncio.create_task(
         run_outbox_cleanup(
             session_factory,
@@ -152,7 +218,10 @@ async def lifespan(app: FastAPI):
     finally:
         for eng in registry.all_engines():
             eng.running = False
-        bg_tasks = (sim_task, analytics_task, outbox_task, auth_cleanup_task)
+        bg_tasks = (
+            sim_task, analytics_task, event_drain_task,
+            outbox_task, auth_cleanup_task,
+        )
         for task in bg_tasks:
             task.cancel()
         # Drain the cancellations — without this, `engine.dispose()` can
@@ -250,6 +319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(orgs_router)
     app.include_router(projects_router)
     app.include_router(project_assets_router)
+    app.include_router(record_router)
     app.include_router(api_router)
     app.include_router(ws_router)
     app.include_router(camera_router)

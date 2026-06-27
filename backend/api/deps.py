@@ -60,6 +60,31 @@ def get_email_sender(request: Request) -> EmailSender:
     return sender
 
 
+def get_capture_parser(request: Request):
+    parser = getattr(request.app.state, "capture_parser", None)
+    if parser is None:
+        raise HTTPException(status_code=503, detail="Capture parser not ready")
+    return parser
+
+
+def get_query_responder(request: Request):
+    responder = getattr(request.app.state, "query_responder", None)
+    if responder is None:
+        raise HTTPException(status_code=503, detail="Query responder not ready")
+    return responder
+
+
+def get_rate_card(request: Request):
+    """Active cost rate card. Falls back to the config default when the
+    lifespan hasn't attached one (e.g. some unit-test app variants)."""
+    rc = getattr(request.app.state, "rate_card", None)
+    if rc is None:
+        from models.cost import default_rate_card
+
+        return default_rate_card()
+    return rc
+
+
 # ---------------------------------------------------------------------------
 # Session + user dependencies
 # ---------------------------------------------------------------------------

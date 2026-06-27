@@ -59,12 +59,25 @@ def update_tiefbau_equipment(asset: Asset, dt_sim: float, engine) -> None:
             asset.state = EquipmentState.IDLE
             meta["cycle_timer"] = 0.0
             engine.log_activity(asset.id, "Dewatering paused")
+            _emit_state_changed(engine, asset, "idle")
     elif asset.state == EquipmentState.IDLE:
         meta["hours_idle"] = meta.get("hours_idle", 0.0) + dt_sim / 3600
         if meta["cycle_timer"] >= DEWATERING_DUTY["idle_duration"]:
             asset.state = EquipmentState.OPERATING
             meta["cycle_timer"] = 0.0
             engine.log_activity(asset.id, "Dewatering resumed")
+            _emit_state_changed(engine, asset, "operating")
+
+
+def _emit_state_changed(engine, asset: Asset, new_state: str) -> None:
+    """Record a dewatering-pump state transition in the ledger (no-op on
+    engines without the system-of-record buffer)."""
+    from simulation.event_emit import record_event
+
+    record_event(
+        engine, "equipment", asset.id, "equipment.state_changed",
+        {"equipment_id": asset.id, "subtype": asset.subtype, "state": new_state},
+    )
 
 
 @dataclass(frozen=True)

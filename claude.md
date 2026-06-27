@@ -69,7 +69,7 @@ SIMULATION (the demo)                    VISION (proof-of-concept)
                 │ users, orgs, memberships, invites│
                 │ sessions, tokens, outbox, audits │
                 │ projects, project_versions,      │
-                │ project_assets                   │
+                │ project_assets, site_events      │
                 └──────────────────────────────────┘
 ```
 
@@ -152,6 +152,14 @@ CC0 construction-site videos are downloaded but gitignored. YOLO weights
    `If-Match: <version_id>`, no CRDTs.
 6. **Multi-level via discrete `level_id` + a connection graph.** Vertical
    transport is BFS on a small graph, not 3D pathfinding.
+7. **The system of record is an append-only event ledger.** `site_events`
+   is the operational source of truth. Current state and costs are
+   projections (folds) over it — never separately maintained. The only
+   write path is `services.event_ledger.EventLedger`; the simulation, the
+   demo generator, manual capture, and a future camera `LiveSource` all
+   append through it. Rows are immutable (the `status` cache aside, whose
+   every change is itself a companion event), hash-chained per stream, and
+   bitemporal (`occurred_at` vs `recorded_at`).
 
 ## Auth, orgs, persistence
 
@@ -171,7 +179,7 @@ flowchart LR
         Email --> Console["ConsoleSender (dev)"]
         Email --> Resend["ResendSender (prod)"]
     end
-    DB --> Tables["users, orgs, org_memberships, org_invites,<br/>auth_sessions, verification_tokens, email_outbox, audit_events,<br/>projects, project_versions, project_assets"]
+    DB --> Tables["users, orgs, org_memberships, org_invites,<br/>auth_sessions, verification_tokens, email_outbox, audit_events,<br/>projects, project_versions, project_assets, site_events"]
 ```
 
 ### Sessions, not JWTs
@@ -339,7 +347,10 @@ overrides. Beyond CORS / log / YOLO knobs, the auth-era fields:
 `session_idle_days`, `cookie_domain`, `cookie_secure`, `email_provider`
 (`console|resend`), `resend_api_key`, `email_from`, `rate_limit_redis_url`.
 Convenience properties: `is_prod`, `is_dev`, `effective_cookie_secure`
-(defaults `True` in prod, `False` in dev). Documented in `.env.example`.
+(defaults `True` in prod, `False` in dev). System-of-record seams:
+`capture_provider` (`rule|llm`), `query_provider` (`deterministic|llm`),
+`record_llm_api_key` (the `llm` providers degrade to the deterministic
+defaults until a key is set). Documented in `.env.example`.
 
 ### `logging_config.py`
 `configure(level, fmt)` installs one stream handler on the root logger.
@@ -545,6 +556,37 @@ class ProjectDocument(BaseModel):
   `mark_dirty()`, `by_id()`. Constructed once per app at lifespan
   startup, injected via `Depends(get_rec_service)`.
 - **`portfolio_estimator.py`** — see "Auth, orgs, persistence" above.
+- **`event_ledger.py`** — `EventLedger(session)`: the single write path
+  into the system of record. `append`/`append_many` assign a per-stream
+  gap-free `seq` and chained `hash`; `set_status` records confirm/reject/
+  supersede as companion events AND updates the cached `status`; `query`
+  filters (subject/kind/source/status/time, excludes companion events by
+  default); `verify_chain` recomputes the chain to detect tampering.
+- **`cost_engine.py`** — `compute_costs(events, rate_card)` folds confirmed
+  `worker.timesheet` / `equipment.utilization` / `material.delivered`
+  events into a `CostBreakdown`. Every `CostLine` carries its supporting
+  event ids. Default `RateCard` in `models/cost.py` (config-sourced).
+- **`record_projections.py`** — pure folds: `entity_projection` (current
+  state + per-type metrics + history for one subject), `daily_rollup`,
+  `event_to_dict`.
+- **`demo_record_generator.py`** — deterministic backfill from the active
+  `ProjectDocument` for the days BEFORE `start_day` (timesheets, equipment
+  utilization + state changes, deliveries incl. a few low-confidence camera
+  detections for the inbox, inspections, incidents). One continuous timeline
+  with live emission. CLI: `seed_demo_record.py`.
+- **`capture.py`** — `CaptureParser` Protocol + `RuleBasedCaptureParser`
+  default (keyword/regex → `proposed` events) + `LLMCaptureParser` stub.
+- **`record_query.py`** — `QueryResponder` Protocol + `DeterministicQueryResponder`
+  default (intent-matched ledger aggregations with supporting events) +
+  `LLMQueryResponder` stub. Both built from `settings.{capture,query}_provider`.
+- **`sim_calendar.py`** — `sim_to_datetime(sim_day, sim_time)` maps the sim
+  clock to ledger `occurred_at` via `RECORD_EPOCH_DATE`.
+
+`simulation/event_emit.py` keeps the engine lean: `record_event` buffers an
+event on `engine.pending_events`, `drain` empties it, `emit_end_of_day`
+writes the daily timesheets + equipment utilization. `main._run_event_drain_loop`
+flushes every live engine into the ledger every `EVENT_DRAIN_INTERVAL`
+(drains on shutdown like the other lifecycle tasks).
 
 ### `api/`
 - **`deps.py`** — FastAPI dependency providers. Domain: `get_source`,
@@ -562,6 +604,12 @@ class ProjectDocument(BaseModel):
   return 501 if the source isn't a `SimulationEngine`.
 - **`projects.py`** — content-addressed project CRUD (see
   "Editor + multi-level" below).
+- **`record.py`** — system-of-record surface (`/api/record/*`): `events`,
+  `days`, `timeline`, `entities/{type}/{id}`, `inbox`, `events/{id}/confirm`,
+  `events/{id}/reject`, `events` (manual), `costs`, `verify`, `capture`,
+  `query`, `demo/generate`. Reads = member+; writes = member+; demo regen =
+  admin+. The active stream is `(org.id, source.project_id)`. Every mutation
+  writes an `audit_events` row.
 - **`project_assets.py`** — background image upload + serve. Multipart
   parser via `python-multipart`.
 - **`websocket.py`** — WS `/ws` streams `state_update` at 10 Hz (assets
@@ -753,8 +801,8 @@ Every `/app/*` route is nested under a two-layer shell:
   popover (clickable project name, lists projects with an active dot) ·
   sim clock (`Day N · HH:MM`) · pause toggle · 1×/2×/5×/10× speed pills ·
   connection dot · `⌘K` button.
-- **`Sidebar.tsx`** — 52 px icon rail, always visible. Five targets:
-  Dashboard / Portfolio / Projects / Settings + a bottom `⌘K` button.
+- **`Sidebar.tsx`** — 52 px icon rail, always visible. Six targets:
+  Dashboard / Portfolio / Record / Projects / Settings + a bottom `⌘K` button.
   Icon-only by design so the canvas keeps maximum horizontal real estate.
   Active route gets the primary-coloured highlight.
 - **`StatusBar.tsx`** — 24 px bottom strip. Workspace cell · pending recs
@@ -783,6 +831,7 @@ Every `/app/*` route is nested under a two-layer shell:
   (otherwise)             → <Chrome> wraps:
       index               → <Dashboard>
       portfolio           → <Portfolio>
+      record              → <RecordPage>     (system of record)
       projects            → <ProjectListPage>
       settings/*          → <SettingsLayout>  (nested NavLink + Outlet)
 ```
@@ -917,6 +966,22 @@ Routed page (`/app/portfolio`) rendered inside `<Chrome>`. Summary cards
 Per-site cards with Open Site button that calls
 `useLive().switchProject(slug)` and navigates back to `/app`.
 
+### `pages/record/*`
+The system-of-record UI under `/app/record` (`RecordPage` tabs, no extra
+routing). `recordApi.ts` is the typed client. Tabs:
+- **Timeline** (`RecordTimeline`) — flight recorder: day selector +
+  events grouped by hour.
+- **Inbox** (`RecordInbox`) — proposed (low-confidence) events; one-tap
+  Confirm / Reject. "Confirm, don't create".
+- **Costs** (`RecordCosts`) — labour / equipment-idle / material totals,
+  recoverable non-productive labour, by-day + by-zone, and cost lines that
+  trace to supporting events.
+- **Ledger** (`RecordLedger`) — searchable raw log + a tamper-evidence
+  "chain verified" badge from `GET /api/record/verify`.
+- **Ask** (`RecordAsk`) — conversational query over the ledger.
+A quick "+ Capture" bar (member+) and a "Generate demo data" button
+(admin) sit above the tabs. `EventRow` + `format.ts` are shared.
+
 ### `pages/settings/*`
 Account (change password, resend verification, delete account), Team
 (members, invites, audit log for owners — payload values folded to
@@ -937,8 +1002,8 @@ values use `tabular-nums` for stable width.
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend | **309** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, **navmesh + path-following + optimizer walkable-clamp**, microbench gates |
-| Frontend | **104** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), **MenuBar (project switch, settings nav, sign out)** |
+| Backend | **348** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, navmesh + path-following + optimizer walkable-clamp, microbench gates, **system of record (ledger hash/verify/bitemporal, cost engine, demo generator, capture, query, `/api/record` flow)** |
+| Frontend | **117** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, **record (recordApi, Inbox, Costs, Ask, Timeline)** |
 
 Mypy strict scoped to `simulation/worker_internals.py`,
 `simulation/worker_behavior.py`, `simulation/navmesh.py`,
@@ -1050,6 +1115,24 @@ Mutating requests carry `credentials: 'include'` + `X-CSRF-Token`.
 | `/api/projects/{id}/levels/{level_id}/background` | POST | `LevelManager` (📐 button) |
 | `/api/projects/{id}/levels/{level_id}/background` | DELETE | `LevelManager` (clr) |
 | `/api/projects/{id}/assets/{asset_id}` | GET | `EditorCanvas` + `SiteMap` background draw |
+
+### System of record (gated by current org)
+
+| Backend route | Method | Frontend caller | Notes |
+|--------------|--------|----------------|-------|
+| `/api/record/events` | GET | `RecordLedger` via `recordApi.listEvents` | Filters: subject/kind/source/status/time |
+| `/api/record/days` | GET | `RecordTimeline` | Per-day rollup for the day selector |
+| `/api/record/timeline` | GET | `RecordTimeline` | `?date=YYYY-MM-DD`; one day's events |
+| `/api/record/entities/{type}/{id}` | GET | (entity drill-in) | Projection + per-type metrics |
+| `/api/record/inbox` | GET | `RecordInbox` | Proposed events awaiting confirmation |
+| `/api/record/events/{id}/confirm` | POST | `RecordInbox` | member+ |
+| `/api/record/events/{id}/reject` | POST | `RecordInbox` | member+ |
+| `/api/record/events` | POST | (manual entry) | member+; high-trust path |
+| `/api/record/costs` | GET | `RecordCosts` | `CostBreakdown` projection |
+| `/api/record/verify` | GET | `RecordLedger` | Hash-chain integrity badge |
+| `/api/record/capture` | POST | `RecordPage` capture bar | member+; text → proposed events |
+| `/api/record/query` | POST | `RecordAsk` | Conversational, read-only |
+| `/api/record/demo/generate` | POST | `RecordPage` (admin) | Regenerate demo history |
 
 ### Dev only (`SITEIQ_ENV=dev`)
 

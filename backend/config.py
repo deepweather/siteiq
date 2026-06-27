@@ -18,10 +18,63 @@ CRANE_HOURLY_RATE = 180
 PUMP_HOURLY_RATE = 120
 EXCAVATOR_HOURLY_RATE = 90
 
+# ── System-of-record cost rates ──────────────────────────────────────
+# Default rate card the cost engine folds the event ledger against. Per-org
+# editable rate cards are a documented future extension; these constants are
+# the ground-truth defaults until then.
+
+# Loaded labour cost per hour, by trade. Trades not listed fall back to
+# LOADED_HOURLY_RATE. Values are illustrative DACH loaded rates (€/h).
+LABOR_HOURLY_RATE_BY_TRADE: dict[str, float] = {
+    "laborer": 45,
+    "carpenter": 55,
+    "electrician": 62,
+    "plumber": 60,
+    "ironworker": 58,
+    "mason": 54,
+    "operator": 65,
+    "finisher": 52,
+}
+
+# Full equipment hourly rate (rental + operator-equivalent) by subtype.
+# Used by the cost engine; the idle-cost analytics above use the crane/
+# pump/excavator constants directly.
+EQUIPMENT_HOURLY_RATE_BY_SUBTYPE: dict[str, float] = {
+    "tower_crane": CRANE_HOURLY_RATE,
+    "concrete_pump": PUMP_HOURLY_RATE,
+    "excavator": EXCAVATOR_HOURLY_RATE,
+    "sheet_pile": 40,
+    "dewatering_pump": 35,
+}
+
+# Material unit cost (€ per delivered unit) by subtype. Units are subtype-
+# specific (tonnes of rebar, m of conduit, sheets of drywall, m³ concrete).
+MATERIAL_UNIT_COST_BY_SUBTYPE: dict[str, float] = {
+    "rebar": 950.0,       # €/tonne
+    "conduit": 6.5,       # €/m
+    "drywall": 12.0,      # €/sheet
+    "concrete": 130.0,    # €/m³
+    "pipe": 18.0,         # €/m
+    "aggregate": 28.0,    # €/tonne
+}
+DEFAULT_MATERIAL_UNIT_COST = 50.0
+
 SIM_TICK_INTERVAL = 0.1
 SIM_SECONDS_PER_TICK = 30
 ANALYTICS_UPDATE_INTERVAL = 1.0
 WS_PUSH_INTERVAL = 0.1
+
+# How often the system-of-record drain loop flushes each live engine's
+# buffered operational events into the ledger (seconds).
+EVENT_DRAIN_INTERVAL = 5.0
+
+# Anchor that maps the simulation clock (sim_day, sim_time) to calendar
+# `occurred_at` timestamps in the ledger. Sim day N, time T (seconds) ->
+# RECORD_EPOCH_DATE + (N-1) days + T seconds. Keeps backfilled history and
+# live emission on one continuous, deterministic timeline. Real camera
+# sources will use wall-clock time instead.
+import datetime as _dt
+RECORD_EPOCH_DATE = _dt.date(2026, 1, 6)
 
 WORKDAY_START = 6 * 3600
 WORKDAY_END = 17 * 3600

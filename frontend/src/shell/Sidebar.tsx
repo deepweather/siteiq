@@ -26,6 +26,7 @@ interface IconLink {
 const NAV: IconLink[] = [
   { to: '/app',           label: 'Dashboard',  icon: '⌂', end: true },
   { to: '/app/portfolio', label: 'Portfolio',  icon: '▦' },
+  { to: '/app/record',    label: 'Record',     icon: '🗎' },
   { to: '/app/projects',  label: 'Projects',   icon: '✎', alsoMatches: ['/app/projects/'] },
   { to: '/app/settings',  label: 'Settings',   icon: '⚙' },
 ];

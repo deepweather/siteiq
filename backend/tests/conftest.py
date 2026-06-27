@@ -14,8 +14,27 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 from simulation.engine import SimulationEngine
+
+
+@pytest_asyncio.fixture
+async def ledger_session():
+    """A throwaway in-memory async DB session with all tables created.
+    Used by system-of-record unit tests that exercise the ledger directly
+    without standing up the full app."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from db.base import Base
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as s:
+        yield s
+    await engine.dispose()
 
 
 @pytest.fixture

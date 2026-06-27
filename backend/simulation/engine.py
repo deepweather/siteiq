@@ -9,6 +9,7 @@ from models.assets import Asset, WorkerState
 from models.connection import Connection
 from models.project_document import ProjectDocument
 from simulation.density import DensityGrid
+from simulation.event_emit import emit_end_of_day
 from simulation.navmesh import NavMesh
 from simulation.project_loader import build_engine_state
 from simulation.site_factory import (
@@ -61,6 +62,12 @@ class SimulationEngine:
         self.position_history: dict[str, deque] = {}
         self.activity_log: dict[str, deque] = {}
         self.running: bool = True
+        # System-of-record: discrete operational events emitted on state
+        # transitions (NOT every tick). The drain loop in main.py flushes
+        # this buffer into the ledger. Bounded so a stalled drain can't
+        # grow it unboundedly. Transient/preview engines simply never get
+        # drained and are GC'd with their buffer.
+        self.pending_events: deque = deque(maxlen=50000)
         self._density = DensityGrid(cell_size=DENSITY_CELL_SIZE)
         # Live cab state for every elevator connection. Stairs have no
         # cab — workers traverse them with a flat time penalty.
@@ -168,6 +175,9 @@ class SimulationEngine:
 
         self.sim_time += dt_sim
         if self.sim_time >= WORKDAY_END:
+            # Emit end-of-day ledger events for the day that just finished
+            # (current self.sim_day) BEFORE the counters reset.
+            emit_end_of_day(self)
             self.sim_time = WORKDAY_START
             self.sim_day += 1
             self._reset_daily_counters()

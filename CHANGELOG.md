@@ -10,6 +10,63 @@ a substitute for git.
 
 ---
 
+## 2026-06 — System of record (operational event ledger)
+
+Added SiteIQ's operational system of record: an append-only, hash-chained,
+bitemporal event ledger that is the single source of truth for everything
+on site. Current state and costs are projections (folds) over the log;
+humans confirm proposed observations rather than typing reports. The
+simulation feeds it today; a future camera `LiveSource` appends through the
+identical ingestion path.
+
+- **`db/models.py` + migration `0005_site_events`** — `site_events` table.
+  Stream key `(org_id, project_id)`; per-stream gap-free `seq`; tamper-evident
+  `hash = sha256(prev_hash + immutable-content)`. Bitemporal: `occurred_at`
+  (valid time) vs `recorded_at` (system time). `status` is a denormalised
+  cache (`proposed|confirmed|rejected|superseded`) — every change is itself
+  recorded as a companion event, so the log stays the truth. `status` is
+  deliberately excluded from the hash so review transitions don't break the
+  chain.
+- **`services/event_ledger.py`** — the ONE write path (`append`, `append_many`,
+  `set_status`, `query`, `verify_chain`). Generator, live drain loop, manual
+  capture, and future cameras all go through it.
+- **`models/site_event.py`** — `EventEnvelope` + enums + `event_hash`.
+- **`services/record_projections.py`** — entity/timeline folds. **`models/cost.py`
+  + `services/cost_engine.py`** — costs as a projection; every `CostLine`
+  carries its supporting event ids (clickable to evidence). Default `RateCard`
+  from `config.py` (new labour/equipment/material rate tables).
+- **Live emission** — `simulation/event_emit.py` buffers discrete events on
+  state transitions (daily `worker.timesheet`, `equipment.utilization`,
+  `equipment.state_changed`, `optimization.applied`) — NOT every tick. The
+  engine keeps a bounded `pending_events` deque; `main._run_event_drain_loop`
+  flushes every live engine into the ledger every `EVENT_DRAIN_INTERVAL`.
+  `services/sim_calendar.py` maps the sim clock to calendar `occurred_at`.
+- **`services/demo_record_generator.py` + `seed_demo_record.py`** —
+  deterministic multi-week backfill from the activated `ProjectDocument`
+  (timesheets, equipment utilization, deliveries incl. a few low-confidence
+  camera detections for the inbox, inspections, incidents). Backfills the
+  days BEFORE `start_day`, so history + live emission form one continuous
+  timeline. `POST /api/record/demo/generate` regenerates idempotently.
+- **Capture + query seams** — `services/capture.py` (`CaptureParser` Protocol
+  + `RuleBasedCaptureParser` default + `LLMCaptureParser` stub) and
+  `services/record_query.py` (`QueryResponder` + `DeterministicQueryResponder`
+  default + `LLMQueryResponder` stub). Mirror the `EmailSender` seam; built
+  from `settings.capture_provider` / `query_provider`; deterministic defaults
+  keep tests hermetic with zero API keys.
+- **`api/record.py`** — `/api/record/*`: events, days, timeline, entities,
+  inbox, confirm/reject, manual events, costs, verify, capture, query,
+  demo/generate. Reads = member+; writes = member+; demo regen = admin+.
+  Every mutation writes an `audit_events` row.
+- **Frontend** — new `/app/record` route + Sidebar entry. `services/recordApi.ts`
+  + `pages/record/` (Timeline flight recorder, confirmation Inbox, Costs,
+  Ledger with chain-verify badge, Ask). Quick "+ Capture" bar.
+
+Tests: backend +49 (ledger/hash/verify/bitemporal, cost math, generator
+determinism, capture, query, full `/api/record` flow); frontend +13
+(recordApi, Inbox, Costs, Ask, Timeline).
+
+---
+
 ## 2026-06 — Project list audit fixes (second handoff round)
 
 Six bugs surfaced by a second walkthrough; all went through the React

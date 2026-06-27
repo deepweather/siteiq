@@ -211,6 +211,22 @@ def _apply_rec(rec, source: SiteStateSource) -> None:
     """
     rec.applied = True
 
+    # System-of-record: log the optimisation as a ledger event (no-op on
+    # sources without the buffer, e.g. a future read-only LiveSource).
+    from simulation.event_emit import record_event
+    record_event(
+        source, "optimization", rec.id, "optimization.applied",
+        {
+            "rec_id": rec.id,
+            "rec_type": rec.type,
+            "title": rec.title,
+            "target_asset_id": rec.target_asset_id,
+            "daily_savings": rec.daily_savings,
+            "monthly_savings": rec.monthly_savings,
+        },
+        source="system",
+    )
+
     # `add_equipment` targets a Connection (elevator), not an Asset.
     # Handle it before the asset lookup so the rest of the function
     # can assume `asset is not None`.

@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     # Simulation
     default_project_id: str = "westhafen"
 
+    # System of record — capture + query seams. Deterministic, dependency-
+    # free defaults ship; the "llm" providers are wireable later without
+    # touching call sites (mirrors the email_provider seam).
+    capture_provider: str = "rule"          # "rule" | "llm"
+    query_provider: str = "deterministic"   # "deterministic" | "llm"
+    record_llm_api_key: str = ""
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "text"  # "text" or "json"
@@ -138,6 +145,22 @@ class Settings(BaseSettings):
         v = v.lower()
         if v not in {"console", "resend"}:
             raise ValueError("email_provider must be one of console|resend")
+        return v
+
+    @field_validator("capture_provider")
+    @classmethod
+    def _validate_capture_provider(cls, v: str) -> str:
+        v = v.lower()
+        if v not in {"rule", "llm"}:
+            raise ValueError("capture_provider must be one of rule|llm")
+        return v
+
+    @field_validator("query_provider")
+    @classmethod
+    def _validate_query_provider(cls, v: str) -> str:
+        v = v.lower()
+        if v not in {"deterministic", "llm"}:
+            raise ValueError("query_provider must be one of deterministic|llm")
         return v
 
 

@@ -30,9 +30,22 @@ def update_equipment(asset: Asset, dt_sim: float, engine) -> None:
             asset.state = EquipmentState.IDLE
             meta["cycle_timer"] = 0.0
             engine.log_activity(asset.id, "Cycle complete, now idle")
+            _emit_state_changed(engine, asset, "idle")
     elif asset.state == EquipmentState.IDLE:
         meta["hours_idle"] = meta.get("hours_idle", 0.0) + dt_sim / 3600
         if meta["cycle_timer"] >= idle_duration:
             asset.state = EquipmentState.OPERATING
             meta["cycle_timer"] = 0.0
             engine.log_activity(asset.id, "Restarted, now operating")
+            _emit_state_changed(engine, asset, "operating")
+
+
+def _emit_state_changed(engine, asset: Asset, new_state: str) -> None:
+    """Record an equipment state transition in the ledger (no-op on engines
+    without the system-of-record buffer, e.g. lightweight test stubs)."""
+    from simulation.event_emit import record_event
+
+    record_event(
+        engine, "equipment", asset.id, "equipment.state_changed",
+        {"equipment_id": asset.id, "subtype": asset.subtype, "state": new_state},
+    )

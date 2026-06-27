@@ -31,6 +31,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Portfolio = lazy(() => import('./components/Portfolio/Portfolio').then((m) => ({ default: m.Portfolio })));
 const ProjectListPage = lazy(() => import('./pages/projects/ProjectListPage'));
 const ProjectEditorPage = lazy(() => import('./pages/projects/ProjectEditorPage'));
+const RecordPage = lazy(() => import('./pages/record/RecordPage'));
 const SettingsLayout = lazy(() => import('./pages/settings/SettingsLayout'));
 const AccountSettings = lazy(() => import('./pages/settings/AccountSettings'));
 const TeamSettings = lazy(() => import('./pages/settings/TeamSettings'));
@@ -84,6 +85,7 @@ export default function App() {
               <Route element={<Lazy><Chrome /></Lazy>}>
                 <Route index element={<Lazy><Dashboard /></Lazy>} />
                 <Route path="portfolio" element={<Lazy><Portfolio /></Lazy>} />
+                <Route path="record" element={<Lazy><RecordPage /></Lazy>} />
                 <Route path="projects" element={<Lazy><ProjectListPage /></Lazy>} />
                 <Route path="settings" element={<Lazy><SettingsLayout /></Lazy>}>
                   <Route index element={<Navigate to="account" replace />} />

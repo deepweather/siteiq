@@ -6,6 +6,8 @@ functions of their inputs, which makes them trivially testable.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +22,7 @@ from simulation.site_factory import PROJECT_TEMPLATES
 from state.source import SiteStateSource
 
 router = APIRouter()
+logger = logging.getLogger("siteiq.api.routes")
 
 
 class SpeedRequest(BaseModel):
@@ -115,6 +118,16 @@ async def load_seed_project(
     # slug-based seed path instead of restoring the previous doc.
     org.active_project_version_id = None
     await db.flush()
+    # Demo: make sure the project we just switched to has a record to show
+    # (backfills only if its stream is empty). Never let this break the switch.
+    try:
+        from seeds.loader import load_seed_document
+        from services.demo_record_generator import ensure_demo_history
+        doc = load_seed_document(req.slug)
+        if doc is not None:
+            await ensure_demo_history(db, org_id=org.id, document=doc)
+    except Exception:
+        logger.exception("ensure_demo_history_failed", extra={"slug": req.slug})
     return {"status": "loaded", "slug": req.slug}
 
 

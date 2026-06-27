@@ -5,28 +5,28 @@ import { EventRow } from './EventRow';
 interface Props {
   canWrite: boolean;
   onChanged?: () => void;
+  refreshKey?: number;
 }
 
 /** Confirmation inbox: low-confidence proposed events awaiting a human.
  *  "Confirm, don't create" — the system proposes, the user approves. */
-export default function RecordInbox({ canWrite, onChanged }: Props) {
+export default function RecordInbox({ canWrite, onChanged, refreshKey = 0 }: Props) {
   const [events, setEvents] = useState<SiteEventDTO[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const r = await recordApi.getInbox();
       setEvents(r.events);
     } finally {
-      setLoading(false);
+      setLoaded(true);
     }
   }, []);
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   const act = async (id: string, action: 'confirm' | 'reject') => {
     setBusy(id);
@@ -40,7 +40,7 @@ export default function RecordInbox({ canWrite, onChanged }: Props) {
     }
   };
 
-  if (loading) {
+  if (!loaded && events.length === 0) {
     return <div className="px-4 py-6 text-sm text-muted-foreground">Loading inbox…</div>;
   }
 

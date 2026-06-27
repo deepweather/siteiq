@@ -230,6 +230,21 @@ def test_member_sees_worker_but_behavioral_redacted(auth_client):
     assert "hours_walking" not in ts[0]["payload"]
 
 
+def test_switching_project_backfills_empty_record(auth_client):
+    # Switching to a fresh seed should auto-populate its record so the
+    # directory isn't empty on first view.
+    r = auth_client.post("/api/site/load-seed", json={"slug": "europa-quarter"})
+    assert r.status_code == 200, r.text
+    body = auth_client.get("/api/record/subjects").json()
+    assert body["project_id"] == "europa-quarter"
+    assert len(body["subjects"]) > 0
+    # Idempotent: switching again doesn't duplicate the backfill.
+    before = auth_client.get("/api/record/events?limit=1000").json()["events"]
+    auth_client.post("/api/site/load-seed", json={"slug": "europa-quarter"})
+    after = auth_client.get("/api/record/events?limit=1000").json()["events"]
+    assert len(after) == len(before)
+
+
 def test_manager_sees_full_worker_detail(auth_client):
     _generate(auth_client)
     # Default auth_client is the org owner (manager) — no override.

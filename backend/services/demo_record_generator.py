@@ -283,3 +283,25 @@ async def generate_demo_history(
         "proposed_count": proposed,
         "kinds": kinds,
     }
+
+
+async def ensure_demo_history(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    document: ProjectDocument,
+    days: int = RECORD_BACKFILL_DAYS,
+) -> dict | None:
+    """Backfill demo history for a stream ONLY if it's currently empty.
+
+    Called when an org starts running a project (activate / seed switch) so
+    every project the org touches has a populated record from the first view,
+    instead of starting at zero and slowly filling via live emission. No-op
+    (returns None) when the stream already has events, so it never clobbers
+    real/live data."""
+    ledger = EventLedger(db)
+    if not await ledger.stream_is_empty(org_id, document.slug):
+        return None
+    return await generate_demo_history(
+        db, org_id=org_id, document=document, days=days, clear_existing=False
+    )

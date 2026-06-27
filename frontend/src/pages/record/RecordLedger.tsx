@@ -92,7 +92,7 @@ export default function RecordLedger({ refreshKey }: { refreshKey: number }) {
         </select>
       </div>
 
-      {loading ? (
+      {loading && events.length === 0 ? (
         <div className="px-4 py-6 text-sm text-muted-foreground">Loading ledger…</div>
       ) : (
         <div className="rounded-xl border border-border bg-card divide-y divide-border">

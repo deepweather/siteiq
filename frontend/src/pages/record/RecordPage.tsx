@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../lib/auth/AuthProvider';
 import { recordApi } from '../../services/recordApi';
 import { EntityDrawer } from './EntityDrawer';
@@ -40,6 +40,20 @@ export default function RecordPage() {
     (type: string, id: string) => setEntity({ type, id }),
     [],
   );
+
+  // The record is live: the simulation keeps emitting events. Poll so new
+  // entries appear without a manual reload / tab switch. Also refresh when
+  // the tab regains focus.
+  useEffect(() => {
+    const tick = () => setRefreshKey((k) => k + 1);
+    const interval = window.setInterval(tick, 10000);
+    const onFocus = () => tick();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
 
   const onCapture = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,7 +157,9 @@ export default function RecordPage() {
         <div>
           {tab === 'directory' && <RecordDirectory refreshKey={refreshKey} />}
           {tab === 'timeline' && <RecordTimeline refreshKey={refreshKey} />}
-          {tab === 'inbox' && <RecordInbox canWrite={canWrite} onChanged={bump} />}
+          {tab === 'inbox' && (
+            <RecordInbox canWrite={canWrite} onChanged={bump} refreshKey={refreshKey} />
+          )}
           {tab === 'costs' && <RecordCosts refreshKey={refreshKey} />}
           {tab === 'ledger' && <RecordLedger refreshKey={refreshKey} />}
           {tab === 'ask' && <RecordAsk />}

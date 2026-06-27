@@ -72,11 +72,13 @@ export default function RecordDirectory({ refreshKey }: { refreshKey: number }) 
         ))}
       </div>
 
-      {loading ? (
+      {loading && subjects.length === 0 ? (
         <div className="px-1 py-6 text-sm text-muted-foreground">Loading directory…</div>
       ) : filtered.length === 0 ? (
         <div className="px-1 py-10 text-center text-sm text-muted-foreground">
-          No subjects match.
+          {subjects.length === 0
+            ? 'No record yet for this project. Generate demo data (above) or let the simulation run — entries appear automatically.'
+            : 'No subjects match.'}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

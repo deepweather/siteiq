@@ -256,6 +256,18 @@ class EventLedger:
         rows = await self.all_for_stream(org_id, project_id)
         return len(rows)
 
+    async def stream_is_empty(self, org_id: str, project_id: str) -> bool:
+        """Cheap existence check (no full load)."""
+        result = await self.db.execute(
+            select(SiteEvent.id)
+            .where(
+                SiteEvent.org_id == org_id,
+                SiteEvent.project_id == project_id,
+            )
+            .limit(1)
+        )
+        return result.first() is None
+
     # ── integrity ───────────────────────────────────────────────────
 
     async def verify_chain(self, org_id: str, project_id: str) -> dict:

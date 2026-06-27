@@ -25,6 +25,7 @@ Audit events
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -46,6 +47,7 @@ from simulation.engine import SimulationEngine
 
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+logger = logging.getLogger("siteiq.api.projects")
 
 
 # ── Request/response schemas ─────────────────────────────────────────
@@ -439,6 +441,16 @@ async def activate_project(
         org_id=org.id, actor_user_id=user.id,
         payload={"project_id": project.id, "version_id": version_id},
     )
+    # Demo: backfill a record for the newly-activated project if its stream
+    # is empty, so the System of Record isn't blank on first view. Never let
+    # this break activation.
+    try:
+        from services.demo_record_generator import ensure_demo_history
+        doc = await repo.load_document(project_id=project.id, version_id=version_id)
+        if doc is not None:
+            await ensure_demo_history(db, org_id=org.id, document=doc)
+    except Exception:
+        logger.exception("ensure_demo_history_failed", extra={"project_id": project.id})
     await db.commit()
     return {
         "status": "activated",

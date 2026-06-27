@@ -21,7 +21,9 @@ export default function RecordCosts({ refreshKey }: { refreshKey: number }) {
     };
   }, [refreshKey]);
 
-  if (loading) return <div className="px-4 py-6 text-sm text-muted-foreground">Loading costs…</div>;
+  if (loading && !costs) {
+    return <div className="px-4 py-6 text-sm text-muted-foreground">Loading costs…</div>;
+  }
   if (!costs || costs.total_cost === 0) {
     return (
       <div className="px-4 py-10 text-center text-sm text-muted-foreground">

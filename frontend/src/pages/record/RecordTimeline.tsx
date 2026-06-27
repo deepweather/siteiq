@@ -69,7 +69,7 @@ export default function RecordTimeline({ refreshKey }: { refreshKey: number }) {
       </div>
 
       <div className="flex-1 min-w-0">
-        {loading ? (
+        {loading && events.length === 0 ? (
           <div className="px-4 py-6 text-sm text-muted-foreground">Loading…</div>
         ) : events.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">

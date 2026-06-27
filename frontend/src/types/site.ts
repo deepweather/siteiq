@@ -40,6 +40,19 @@ export interface SiteConnection {
   nodes: ConnectionNode[];
 }
 
+export interface Road {
+  /** Author-stable id; not used by the renderer beyond debug labels. */
+  id: string;
+  /** Polyline points in site metres. The renderer stamps a strip of
+   *  `width_m` along every segment + a half-width disk at every node. */
+  points: [number, number][];
+  /** Width of the stamped strip in metres. */
+  width_m: number;
+  /** Which level the road lives on. Defaults to "L0" for legacy
+   *  single-floor projects. */
+  level_id?: string;
+}
+
 export interface Site {
   id: string;
   name: string;
@@ -54,4 +67,8 @@ export interface Site {
   /** Phase 3: vertical-transport graph. Empty for single-floor projects. */
   connections?: SiteConnection[];
   discipline?: string;
+  /** Authored walkable corridors (polylines). When empty the renderer
+   *  falls back to a default south + west perimeter strip so legacy
+   *  documents still draw something sensible. */
+  roads?: Road[];
 }

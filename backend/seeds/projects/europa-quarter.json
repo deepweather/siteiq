@@ -1,6 +1,6 @@
 {
   "connections": [],
-  "description": "12-story office tower with 2 wings, 18,000m² GFA. Open site with good access but poor facility placement.",
+  "description": "12-story office tower with 2 wings, 18,000m\u00b2 GFA. Open site with good access but poor facility placement.",
   "discipline": "hybrid",
   "equipment": [
     {
@@ -132,7 +132,99 @@
       "y": 195.0
     }
   ],
-  "name": "Bürocampus Europaviertel — Frankfurt",
+  "name": "B\u00fcrocampus Europaviertel \u2014 Frankfurt",
+  "roads": [
+    {
+      "id": "road-south",
+      "level_id": "L0",
+      "points": [
+        [
+          0.0,
+          192.0
+        ],
+        [
+          300.0,
+          192.0
+        ]
+      ],
+      "width_m": 12.0
+    },
+    {
+      "id": "road-west",
+      "level_id": "L0",
+      "points": [
+        [
+          4.0,
+          0.0
+        ],
+        [
+          4.0,
+          200.0
+        ]
+      ],
+      "width_m": 8.0
+    },
+    {
+      "id": "road-spine-ew",
+      "level_id": "L0",
+      "points": [
+        [
+          0.0,
+          102.0
+        ],
+        [
+          300.0,
+          102.0
+        ]
+      ],
+      "width_m": 8.0
+    },
+    {
+      "id": "road-towers",
+      "level_id": "L0",
+      "points": [
+        [
+          125.0,
+          0.0
+        ],
+        [
+          125.0,
+          95.0
+        ]
+      ],
+      "width_m": 6.0
+    },
+    {
+      "id": "road-aussen",
+      "level_id": "L0",
+      "points": [
+        [
+          225.0,
+          5.0
+        ],
+        [
+          225.0,
+          145.0
+        ]
+      ],
+      "width_m": 8.0
+    },
+    {
+      "id": "road-tg-split",
+      "level_id": "L0",
+      "points": [
+        [
+          110.0,
+          142.0
+        ],
+        [
+          300.0,
+          142.0
+        ]
+      ],
+      "width_m": 6.0
+    }
+  ],
   "schedule": [
     {
       "end_day": 40,
@@ -345,7 +437,7 @@
     {
       "height": 120.0,
       "id": "zone-f",
-      "label": "Außenanlagen",
+      "label": "Au\u00dfenanlagen",
       "level_id": "L0",
       "phase": "excavation",
       "phase_progress": 0.25,

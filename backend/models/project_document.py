@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from models.assets import DEFAULT_LEVEL_ID
 from models.connection import Connection
-from models.site import Discipline, Level, Phase, ScheduleEntry, Zone
+from models.site import Discipline, Level, Phase, Road, ScheduleEntry, Zone
 
 
 SCHEMA_VERSION = 1
@@ -87,6 +87,10 @@ class ProjectDocument(BaseModel):
     connections: list[Connection] = Field(default_factory=list)
     schedule: list[ScheduleEntry] = Field(default_factory=list)
     worker_seeds: list[WorkerSeed] = Field(default_factory=list)
+    # Authored road network. Empty means the navmesh + renderer fall back
+    # to the legacy hardcoded perimeter strips, so v1 documents (and any
+    # imported seeds without `roads`) load and run unchanged.
+    roads: list[Road] = Field(default_factory=list)
 
     @field_validator("levels")
     @classmethod

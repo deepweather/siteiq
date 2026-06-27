@@ -14,7 +14,7 @@
  * there's no perf hit when the user isn't using iso mode.
  */
 import type { AssetUpdate, Trail } from '../../types/assets';
-import type { Level, SiteConnection, Zone } from '../../types/site';
+import type { Level, Road, SiteConnection, Zone } from '../../types/site';
 import type { Recommendation } from '../../types/analytics';
 import type { HeatmapData } from '../../services/api';
 import { renderFrame } from './renderer';
@@ -64,6 +64,8 @@ export interface IsoRenderArgs {
   /** Vertical-transport graph — drawn as lines crossing the slab gap
    *  between each pair of adjacent levels the connection touches. */
   connections?: SiteConnection[];
+  /** Authored walkable corridors. Filtered per-level inside renderIso. */
+  roads?: Road[];
 }
 
 const _slabs = new Map<string, LevelSlab>();
@@ -108,7 +110,7 @@ export function renderIso(args: IsoRenderArgs): void {
   const {
     ctx, levels, zones, siteWidth, siteHeight,
     assets, trails, options, recommendations, scale,
-    selectedAssetId, heatmap, recentApply,
+    selectedAssetId, heatmap, recentApply, roads,
     levelGapPx = Math.max(40, siteHeight * scale * 0.18),
     connections,
   } = args;
@@ -144,12 +146,13 @@ export function renderIso(args: IsoRenderArgs): void {
       const slabAssets = assets.filter((a) => (a.lvl ?? 'L0') === level.id);
       slab.ctx.setTransform(1, 0, 0, 1, 0, 0);
       // Render this slab in its own coordinate system (offset (0,0)).
+      const slabRoads = (roads ?? []).filter((r) => (r.level_id ?? 'L0') === level.id);
       renderFrame(
         slab.ctx as unknown as CanvasRenderingContext2D,
         slabZones, siteWidth, siteHeight,
         slabAssets, trails, options, recommendations,
         scale, { x: 0, y: 0 },
-        selectedAssetId, heatmap, recentApply,
+        selectedAssetId, heatmap, recentApply, slabRoads,
       );
       slab.dirtyHash = hash;
     }

@@ -125,7 +125,99 @@
       "y": 115.0
     }
   ],
-  "name": "Brückenneubau B2 Isarbrücke — München",
+  "name": "Br\u00fcckenneubau B2 Isarbr\u00fccke \u2014 M\u00fcnchen",
+  "roads": [
+    {
+      "id": "road-north-service",
+      "level_id": "L0",
+      "points": [
+        [
+          0.0,
+          8.0
+        ],
+        [
+          350.0,
+          8.0
+        ]
+      ],
+      "width_m": 8.0
+    },
+    {
+      "id": "road-south-service",
+      "level_id": "L0",
+      "points": [
+        [
+          0.0,
+          110.0
+        ],
+        [
+          350.0,
+          110.0
+        ]
+      ],
+      "width_m": 10.0
+    },
+    {
+      "id": "road-cross-1",
+      "level_id": "L0",
+      "points": [
+        [
+          75.0,
+          0.0
+        ],
+        [
+          75.0,
+          120.0
+        ]
+      ],
+      "width_m": 6.0
+    },
+    {
+      "id": "road-cross-2",
+      "level_id": "L0",
+      "points": [
+        [
+          155.0,
+          0.0
+        ],
+        [
+          155.0,
+          120.0
+        ]
+      ],
+      "width_m": 6.0
+    },
+    {
+      "id": "road-cross-3",
+      "level_id": "L0",
+      "points": [
+        [
+          245.0,
+          0.0
+        ],
+        [
+          245.0,
+          120.0
+        ]
+      ],
+      "width_m": 6.0
+    },
+    {
+      "id": "road-cross-4",
+      "level_id": "L0",
+      "points": [
+        [
+          305.0,
+          0.0
+        ],
+        [
+          305.0,
+          120.0
+        ]
+      ],
+      "width_m": 6.0
+    }
+  ],
   "schedule": [
     {
       "end_day": 50,
@@ -273,7 +365,7 @@
     {
       "height": 70.0,
       "id": "zone-c",
-      "label": "Überbau Mitte",
+      "label": "\u00dcberbau Mitte",
       "level_id": "L0",
       "phase": "structural",
       "phase_progress": 0.3,

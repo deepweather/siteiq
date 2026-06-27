@@ -1,5 +1,5 @@
 import type { AssetUpdate, Trail } from '../../types/assets';
-import type { Zone } from '../../types/site';
+import type { Road, Zone } from '../../types/site';
 import type { Recommendation } from '../../types/analytics';
 import type { HeatmapData } from '../../services/api';
 import { TRADE_COLORS } from '../../utils/colors';
@@ -40,6 +40,7 @@ export function renderFrame(
   selectedAssetId?: string | null,
   heatmap?: HeatmapData | null,
   recentApply?: { assetId: string; ts: number } | null,
+  roads?: Road[],
 ) {
   const dpr = window.devicePixelRatio || 1;
   const cw = ctx.canvas.width / dpr;
@@ -52,7 +53,7 @@ export function renderFrame(
   ctx.fillRect(0, 0, cw, ch);
 
   drawSiteGround(ctx, siteWidth, siteHeight);
-  drawAccessRoads(ctx, siteWidth, siteHeight);
+  drawRoads(ctx, siteWidth, siteHeight, roads);
   drawSiteFence(ctx, siteWidth, siteHeight);
 
   drawZoneStructures(ctx, zones);
@@ -136,10 +137,65 @@ function drawSiteGround(ctx: CanvasRenderingContext2D, sw: number, sh: number) {
   }
 }
 
-function drawAccessRoads(ctx: CanvasRenderingContext2D, sw: number, sh: number) {
+function drawRoads(
+  ctx: CanvasRenderingContext2D,
+  sw: number,
+  sh: number,
+  roads?: Road[],
+) {
+  // Authored network when the project document declares one. Otherwise
+  // we fall back to the legacy perimeter pattern so older documents
+  // still draw a visible road system.
+  if (roads && roads.length > 0) {
+    for (const r of roads) {
+      drawRoadPolyline(ctx, r);
+    }
+    return;
+  }
+  drawLegacyPerimeter(ctx, sw, sh);
+}
+
+function drawRoadPolyline(ctx: CanvasRenderingContext2D, road: Road) {
+  if (road.points.length === 0) return;
+  // Outer shoulder + body + dashed centre line — three strokes so the
+  // corridor reads as a real graded road instead of a tinted stain on
+  // the ground.
+
+  // Slightly darker shoulder catches the eye against the sandy ground.
+  ctx.strokeStyle = '#8a7f6a';
+  ctx.lineWidth = ps(road.width_m) + 1;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  drawPolylinePath(ctx, road.points);
+  ctx.stroke();
+
+  // Main road body.
+  ctx.strokeStyle = '#a09682';
+  ctx.lineWidth = ps(road.width_m);
+  drawPolylinePath(ctx, road.points);
+  ctx.stroke();
+
+  // Dashed centre line.
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = Math.max(1, ps(0.35));
+  ctx.setLineDash([ps(4), ps(3)]);
+  drawPolylinePath(ctx, road.points);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawPolylinePath(ctx: CanvasRenderingContext2D, points: [number, number][]) {
+  ctx.beginPath();
+  ctx.moveTo(px(points[0][0]), py(points[0][1]));
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(px(points[i][0]), py(points[i][1]));
+  }
+}
+
+function drawLegacyPerimeter(ctx: CanvasRenderingContext2D, sw: number, sh: number) {
+  // South strip.
   ctx.fillStyle = '#a8a090';
   ctx.fillRect(px(0), py(sh - 12), ps(sw), ps(12));
-
   ctx.strokeStyle = 'rgba(255,255,255,0.4)';
   ctx.lineWidth = 1;
   ctx.setLineDash([ps(4), ps(3)]);
@@ -148,10 +204,10 @@ function drawAccessRoads(ctx: CanvasRenderingContext2D, sw: number, sh: number) 
   ctx.lineTo(px(sw), py(sh - 6));
   ctx.stroke();
   ctx.setLineDash([]);
-
+  // West strip.
   ctx.fillStyle = '#a8a090';
   ctx.fillRect(px(0), py(0), ps(8), ps(sh));
-
+  // Gate marker at south-centre.
   ctx.fillStyle = '#8a8070';
   ctx.fillRect(px(sw / 2 - 10), py(sh - 14), ps(20), ps(14));
   ctx.fillStyle = 'rgba(255,255,255,0.7)';

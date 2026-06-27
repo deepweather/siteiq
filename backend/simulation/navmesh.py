@@ -45,7 +45,7 @@ from config import (
     ROAD_WEST_STRIP_M,
 )
 from models.assets import Asset, Position
-from models.site import Site, Zone
+from models.site import Road, Site, Zone
 
 SQRT2 = math.sqrt(2)
 
@@ -90,26 +90,99 @@ class NavMesh:
             site_height=site.height,
             cell_size=cell_size,
         )
-        mesh._stamp_road(ROAD_SOUTH_STRIP_M, ROAD_WEST_STRIP_M)
+        # Roads are authored data per project. When a project's site
+        # ships no `roads`, fall back to the legacy perimeter pattern
+        # (south + west strips + gate) so older seeds and the
+        # hardcoded-roads era keep working.
+        level_roads = [r for r in site.roads if r.level_id == level_id]
+        if level_roads:
+            mesh._stamp_roads(level_roads)
+        else:
+            mesh._stamp_perimeter_fallback(ROAD_SOUTH_STRIP_M, ROAD_WEST_STRIP_M)
         mesh._stamp_zones([z for z in site.zones if z.level_id == level_id])
         mesh._stamp_equipment(
             [e for e in equipment if e.position.level_id == level_id]
         )
         return mesh
 
-    def _stamp_road(self, south_strip_m: float, west_strip_m: float) -> None:
-        """Carve the renderer's hardcoded perimeter road pattern at the
-        cheaper road cost. Workers naturally hug these strips because
-        cardinal moves there cost less than open-ground."""
+    def _stamp_perimeter_fallback(
+        self, south_strip_m: float, west_strip_m: float
+    ) -> None:
+        """Legacy "south + west perimeter strip" road pattern. Used only
+        when the project document doesn't author its own road network."""
         for cy in range(self.rows):
             yc = cy * self.cell_size + self.cell_size / 2
             for cx in range(self.cols):
                 xc = cx * self.cell_size + self.cell_size / 2
-                # South strip: bottom band, height = south_strip_m
                 if yc >= self.site_height - south_strip_m:
                     self.cost[cy * self.cols + cx] = NAVMESH_COST_ROAD
-                # West strip: left band, width = west_strip_m
                 elif xc < west_strip_m:
+                    self.cost[cy * self.cols + cx] = NAVMESH_COST_ROAD
+
+    def _stamp_roads(self, roads: Iterable[Road]) -> None:
+        """Carve each authored road polyline into the cost grid. Every
+        cell whose centre is within `width_m / 2` of any road segment
+        gets the road cost. Endpoints + corners are rounded with the
+        same half-width disk so consecutive segments meeting at an
+        angle don't leave a missing wedge."""
+        for road in roads:
+            if len(road.points) < 1:
+                continue
+            half_w = road.width_m / 2.0
+            r2 = half_w * half_w
+            # Stamp each segment as a thick line + a disk at every node
+            # so corners stay clean.
+            for i, (x, y) in enumerate(road.points):
+                self._stamp_disk(x, y, half_w, r2)
+                if i + 1 < len(road.points):
+                    self._stamp_segment(x, y, road.points[i + 1][0], road.points[i + 1][1], half_w, r2)
+
+    def _stamp_disk(self, cx_m: float, cy_m: float, radius: float, r2: float) -> None:
+        cx0 = max(0, int((cx_m - radius) / self.cell_size))
+        cy0 = max(0, int((cy_m - radius) / self.cell_size))
+        cx1 = min(self.cols, int(math.ceil((cx_m + radius) / self.cell_size)))
+        cy1 = min(self.rows, int(math.ceil((cy_m + radius) / self.cell_size)))
+        for cy in range(cy0, cy1):
+            ym = cy * self.cell_size + self.cell_size / 2
+            for cx in range(cx0, cx1):
+                xm = cx * self.cell_size + self.cell_size / 2
+                dx = xm - cx_m
+                dy = ym - cy_m
+                if dx * dx + dy * dy <= r2:
+                    self.cost[cy * self.cols + cx] = NAVMESH_COST_ROAD
+
+    def _stamp_segment(
+        self, ax: float, ay: float, bx: float, by: float, half_w: float, r2: float,
+    ) -> None:
+        """Stamp every cell whose centre is within `half_w` of the
+        segment a->b. Cell-by-cell scan over the segment's bbox + a
+        point-to-segment distance test — cheap enough at our grid size."""
+        x_lo = min(ax, bx) - half_w
+        x_hi = max(ax, bx) + half_w
+        y_lo = min(ay, by) - half_w
+        y_hi = max(ay, by) + half_w
+        cx0 = max(0, int(x_lo / self.cell_size))
+        cy0 = max(0, int(y_lo / self.cell_size))
+        cx1 = min(self.cols, int(math.ceil(x_hi / self.cell_size)))
+        cy1 = min(self.rows, int(math.ceil(y_hi / self.cell_size)))
+        seg_dx = bx - ax
+        seg_dy = by - ay
+        seg_len2 = seg_dx * seg_dx + seg_dy * seg_dy or 1.0
+        for cy in range(cy0, cy1):
+            ym = cy * self.cell_size + self.cell_size / 2
+            for cx in range(cx0, cx1):
+                xm = cx * self.cell_size + self.cell_size / 2
+                # Project (xm, ym) onto the segment, clamp to [0, 1].
+                t = ((xm - ax) * seg_dx + (ym - ay) * seg_dy) / seg_len2
+                if t < 0:
+                    t = 0.0
+                elif t > 1:
+                    t = 1.0
+                px = ax + t * seg_dx
+                py = ay + t * seg_dy
+                dx = xm - px
+                dy = ym - py
+                if dx * dx + dy * dy <= r2:
                     self.cost[cy * self.cols + cx] = NAVMESH_COST_ROAD
 
     def _stamp_zones(self, zones: Iterable[Zone]) -> None:

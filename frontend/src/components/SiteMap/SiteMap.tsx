@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import type { AssetUpdate, Trail } from '../../types/assets';
-import type { Level, SiteConnection, Zone } from '../../types/site';
+import type { Level, Road, SiteConnection, Zone } from '../../types/site';
 import type { Recommendation } from '../../types/analytics';
 import type { CabSnapshot } from '../../hooks/useWebSocket';
 import { Toggle } from '../common/Toggle';
@@ -33,9 +33,12 @@ interface SiteMapProps {
   /** Vertical-transport graph. Used to look up anchor positions on the
    *  active level when drawing the cab queue overlay. */
   connections?: SiteConnection[];
+  /** Authored walkable corridors. When provided, the renderer draws
+   *  these instead of the legacy hardcoded south + west perimeter. */
+  roads?: Road[];
 }
 
-export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, cabsRef, recommendations, selectedAssetId, onAssetSelect, recentApply, levels, connections }: SiteMapProps) {
+export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, cabsRef, recommendations, selectedAssetId, onAssetSelect, recentApply, levels, connections, roads }: SiteMapProps) {
   const [activeLevel, setActiveLevel] = useState<string>(DEFAULT_LEVEL_ID);
 
   // Reset activeLevel + iso-slab cache whenever the project changes
@@ -362,7 +365,7 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, ca
           options: { showTrails, showHeatmap, showRecs },
           recommendations, scale,
           selectedAssetId, heatmap: heatmapRef.current, recentApply,
-          connections,
+          connections, roads,
         });
       } else {
         // Background floor-plan image for the active level, if any.
@@ -429,6 +432,7 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, ca
           selectedAssetId,
           heatmapRef.current,
           recentApply,
+          (roads ?? []).filter((r) => (r.level_id ?? DEFAULT_LEVEL_ID) === activeLevel),
         );
         if (bgImage) {
           // Restore the original fillRect so the rest of the frame
@@ -463,7 +467,7 @@ export function SiteMap({ zones, siteWidth, siteHeight, assetsRef, trailsRef, ca
       window.removeEventListener('mouseup', onMouseUp);
       canvas.removeEventListener('dblclick', onDblClick);
     };
-  }, [zones, siteWidth, siteHeight, assetsRef, trailsRef, cabsRef, showTrails, showHeatmap, showRecs, recommendations, getTransform, handleCanvasClick, selectedAssetId, recentApply, activeLevel, levels, visibleZones, isoView, connections]);
+  }, [zones, siteWidth, siteHeight, assetsRef, trailsRef, cabsRef, showTrails, showHeatmap, showRecs, recommendations, getTransform, handleCanvasClick, selectedAssetId, recentApply, activeLevel, levels, visibleZones, isoView, connections, roads]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0">

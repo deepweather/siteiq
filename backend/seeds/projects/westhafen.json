@@ -109,7 +109,99 @@
       "y": 155.0
     }
   ],
-  "name": "Wohnanlage Westhafen — Berlin",
+  "name": "Wohnanlage Westhafen \u2014 Berlin",
+  "roads": [
+    {
+      "id": "road-south",
+      "level_id": "L0",
+      "points": [
+        [
+          0.0,
+          152.0
+        ],
+        [
+          240.0,
+          152.0
+        ]
+      ],
+      "width_m": 12.0
+    },
+    {
+      "id": "road-west",
+      "level_id": "L0",
+      "points": [
+        [
+          4.0,
+          0.0
+        ],
+        [
+          4.0,
+          160.0
+        ]
+      ],
+      "width_m": 8.0
+    },
+    {
+      "id": "road-spine-ew",
+      "level_id": "L0",
+      "points": [
+        [
+          0.0,
+          77.0
+        ],
+        [
+          240.0,
+          77.0
+        ]
+      ],
+      "width_m": 8.0
+    },
+    {
+      "id": "road-a-b",
+      "level_id": "L0",
+      "points": [
+        [
+          90.0,
+          0.0
+        ],
+        [
+          90.0,
+          77.0
+        ]
+      ],
+      "width_m": 6.0
+    },
+    {
+      "id": "road-tg-c",
+      "level_id": "L0",
+      "points": [
+        [
+          52.0,
+          77.0
+        ],
+        [
+          52.0,
+          152.0
+        ]
+      ],
+      "width_m": 6.0
+    },
+    {
+      "id": "road-c-a",
+      "level_id": "L0",
+      "points": [
+        [
+          132.0,
+          77.0
+        ],
+        [
+          132.0,
+          152.0
+        ]
+      ],
+      "width_m": 6.0
+    }
+  ],
   "schedule": [
     {
       "end_day": 30,
@@ -280,7 +372,7 @@
     {
       "height": 60.0,
       "id": "zone-e",
-      "label": "Außenanlagen",
+      "label": "Au\u00dfenanlagen",
       "level_id": "L0",
       "phase": "excavation",
       "phase_progress": 0.4,

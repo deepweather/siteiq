@@ -61,6 +61,21 @@ class ScheduleEntry(BaseModel):
     trades_required: list[str]
 
 
+class Road(BaseModel):
+    """Authored walkable corridor. A polyline of `(x, y)` points; the
+    navmesh + renderer stamp a strip of `width_m` along each segment.
+
+    Roads are the cheapest cells on the navmesh — workers prefer them
+    over open ground and over zone interiors. Drawing them is the
+    canvas equivalent: a darker strip with a dashed centre line.
+    """
+
+    id: str
+    points: list[tuple[float, float]]
+    width_m: float = 6.0
+    level_id: str = "L0"
+
+
 class Site(BaseModel):
     id: str
     name: str
@@ -71,3 +86,8 @@ class Site(BaseModel):
     schedule: list[ScheduleEntry] = []
     discipline: Discipline = Discipline.HOCHBAU
     levels: list[Level] = []
+    # Authored road / pedestrian-corridor network. When empty the navmesh
+    # and renderer fall back to the legacy hardcoded perimeter pattern
+    # (south + west strips). Polyline-based so authors can curve roads
+    # around obstacles rather than be limited to grid-aligned strips.
+    roads: list[Road] = []

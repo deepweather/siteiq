@@ -44,6 +44,7 @@ def build_engine_state(
         schedule=list(doc.schedule),
         discipline=doc.discipline,
         levels=list(doc.levels),
+        roads=list(doc.roads),
     )
 
     assets: list[Asset] = []

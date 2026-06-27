@@ -68,6 +68,7 @@ export default function Dashboard() {
           recentApply={live.recentApply}
           levels={live.site.levels}
           connections={live.site.connections}
+          roads={live.site.roads}
         />
         <RightPanel
           waste={live.currentWaste}

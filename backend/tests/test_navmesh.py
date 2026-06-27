@@ -274,3 +274,48 @@ def test_south_strip_constant_matches_renderer_pattern():
     constant in one place but not the other, the navmesh and the
     visuals stop agreeing on where the road is."""
     assert ROAD_SOUTH_STRIP_M == 12.0
+
+
+# ── 6. Authored roads ───────────────────────────────────────────────
+
+
+def test_authored_road_polyline_stamps_cells_as_road():
+    """When the project document declares an explicit road, its cells
+    become the cheap road cost — and the legacy perimeter fallback is
+    NOT applied. This is the path workers prefer over open ground."""
+    from config import NAVMESH_COST_ROAD
+    from models.site import Road
+    site = _empty_site(width=100, height=100)
+    # Single horizontal road through the middle.
+    site.roads = [
+        Road(id="road-h", points=[(0.0, 50.0), (100.0, 50.0)], width_m=8.0)
+    ]
+    mesh = NavMesh.build(level_id="L0", site=site, equipment=[])
+    # Middle of the strip is road.
+    on_road = mesh.cost[int(50 / NAVMESH_CELL_SIZE_M) * mesh.cols + int(50 / NAVMESH_CELL_SIZE_M)]
+    assert on_road == NAVMESH_COST_ROAD
+    # The legacy south strip (y=88-100) is NOT carved (no fallback when
+    # authored roads exist).
+    south = mesh.cost[int(95 / NAVMESH_CELL_SIZE_M) * mesh.cols + int(50 / NAVMESH_CELL_SIZE_M)]
+    assert south != NAVMESH_COST_ROAD
+
+
+def test_authored_road_with_corner_keeps_walkable_through_turn():
+    """An L-shaped road should be road all the way through the corner —
+    `_stamp_disk` at each polyline node fills the wedge that a
+    segment-only stamp would leave behind."""
+    from models.site import Road
+    site = _empty_site(width=80, height=80)
+    site.roads = [
+        Road(id="L", points=[(10.0, 40.0), (40.0, 40.0), (40.0, 10.0)], width_m=8.0)
+    ]
+    mesh = NavMesh.build(level_id="L0", site=site, equipment=[])
+    # The corner cell at (40, 40) must be walkable.
+    assert mesh.is_walkable(40, 40)
+    # And a path from the road's start to its end must thread along it.
+    path = mesh.path(
+        Position(x=12, y=40, level_id="L0"),
+        Position(x=40, y=12, level_id="L0"),
+    )
+    for w in path:
+        assert mesh.is_walkable(w.x, w.y), f"path leaves the road at ({w.x},{w.y})"

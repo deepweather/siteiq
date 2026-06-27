@@ -15,6 +15,7 @@ from typing import Any, Iterable, Protocol, runtime_checkable
 from models.assets import Asset
 from models.connection import Connection
 from models.site import Level, Site, Zone
+from simulation.navmesh import NavMesh
 
 
 @runtime_checkable
@@ -78,6 +79,18 @@ class SiteStateSource(Protocol):
     def connections_from_level(self, level_id: str) -> list[Connection]:
         """Every connection that touches `level_id` as one of its nodes.
         Used by the FSM to find candidate stairs/elevators."""
+        ...
+
+    # ── Pathfinding (navmesh) ───────────────────────────────────────
+    #
+    # The simulation engine builds one `NavMesh` per level so the worker
+    # FSM can route around equipment + the fence + (softly) other zones.
+    # The optimizer reads `navmesh.distance(a, b)` so recommendation
+    # savings reflect the path workers actually walk.
+
+    def navmesh_for_level(self, level_id: str) -> NavMesh | None:
+        """The navmesh for `level_id`, or None if the source doesn't
+        model walkability for this level."""
         ...
 
 

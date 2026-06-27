@@ -28,3 +28,47 @@ WORKDAY_END = 17 * 3600
 WORKING_DAYS_PER_MONTH = 22
 
 MAX_TRAIL_LENGTH = 150
+
+# ── Navmesh (worker pathfinding) ─────────────────────────────────────
+# Workers no longer walk in straight lines. `simulation/navmesh.NavMesh`
+# overlays a weighted grid on every level and uses A* + string-pull so
+# paths route around equipment, hug roads, and avoid foundation pits.
+# The values below define the cost grid; tune the weights to shift the
+# balance between "shortest" and "stay on roads".
+
+# Cell size in metres. 2 m gives ~9.6k cells on a 240x160 site —
+# fast enough for cold A* (< 5 ms), trivial when cached.
+NAVMESH_CELL_SIZE_M = 2.0
+
+# Per-cell traversal costs. Lower = cheaper = preferred. Roads are the
+# baseline cost so the A* heuristic stays admissible.
+#   road (1.0) < open ground (1.5) < zone interior (2.0)
+# Workers prefer roads, then walk across empty ground, and only cross
+# other workers' zones when the detour would be very long. Their own
+# zone they cross when leaving it — analytics still measures the
+# zone-time correctly via `internals.time_walking`.
+NAVMESH_COST_ROAD = 1.0
+NAVMESH_COST_OPEN = 1.5
+NAVMESH_COST_ZONE = 2.0
+# Treated as +infinity by A*. Any value >= this is impassable.
+NAVMESH_COST_BLOCKED = 1e9
+
+# Renderer-baked road geometry, kept here so the simulation and the
+# canvas drawer share one source of truth. South strip = the access
+# road along the bottom edge; west strip = the spur up the left side.
+ROAD_SOUTH_STRIP_M = 12.0
+ROAD_WEST_STRIP_M = 8.0
+
+# Footprint radii in metres for the navmesh's "no walking through a
+# crane" rule. Picked to match the visual extents in the renderer +
+# real-world equipment swept areas. Subtypes not in the table fall
+# through to 0 m (no footprint), which is the right default for tiny
+# props (sheet piles on their own are placed in rows, and a row's
+# combined footprint forms a wall naturally).
+EQUIPMENT_FOOTPRINT_RADIUS_M: dict[str, float] = {
+    "tower_crane": 15.0,
+    "concrete_pump": 6.0,
+    "excavator": 8.0,
+    "sheet_pile": 2.0,
+    "dewatering_pump": 3.0,
+}

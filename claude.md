@@ -424,6 +424,19 @@ class ProjectDocument(BaseModel):
   `(Site, list[Asset], dict[worker_id, WorkerInternals], list[Connection])`
   from a `ProjectDocument`. The only doc→engine translation.
 
+- **`navmesh.py`** — `NavMesh` per level: 2 m weighted grid (road
+  1.0, open ground 1.5, zone interior 2.0, equipment footprint and
+  off-site = infinity) with A* + octile heuristic + Bresenham
+  string-pull simplification + path cache. `build(level_id, site,
+  equipment)` overlays roads (matching renderer's south + west strips),
+  zone rectangles, and per-subtype equipment circles
+  (`EQUIPMENT_FOOTPRINT_RADIUS_M` in [config.py](backend/config.py)).
+  `path(start, end)` returns the worker-facing waypoint list;
+  `distance(start, end)` is used by the optimizer to score
+  recommendations by what workers actually walk;
+  `nearest_walkable(x, y)` snaps a candidate placement off impassable
+  cells; `invalidate()` wipes the cache on rec apply / project switch.
+
 - **`engine.py`** (~140 LOC, down from 243) — `SimulationEngine`
   implements `SiteStateSource`. Owns `assets`, `site`, `worker_internals`,
   `position_history`, `activity_log`, plus O(1) indexes (`_by_id`,
@@ -446,7 +459,15 @@ class ProjectDocument(BaseModel):
   same-level facility, falls back cross-level only when none exists on
   the worker's current floor. `_begin_vertical_route` BFSes the
   connection graph and sets `WALKING_TO_VERTICAL` if the destination is
-  on a different level.
+  on a different level. Movement primitives:
+  - `move_toward(worker, target, dt_sim)` — single-segment walk.
+  - `set_path(worker, internals, engine, dest)` — queries the per-level
+    navmesh and stashes the waypoint list on `WorkerInternals.path` /
+    `.path_index`. Falls back to single-target on sources without a navmesh.
+  - `follow_path(worker, internals, dt_sim)` — walks one tick along
+    `internals.path`, advancing the index on arrival. Every "walking"
+    state handler calls this instead of `move_toward` so workers route
+    around equipment + along roads instead of cutting through cranes.
 
 - **`vertical_transport.py`** — one `CabState` per elevator
   `Connection`: `current_level_id`, `direction (+1/-1/0)`,
@@ -497,9 +518,15 @@ class ProjectDocument(BaseModel):
 ### `optimization/` (all take `source: SiteStateSource`)
 - **`facility_placement.py`** — Weighted k-means (k=2) **per level** —
   toilets can't move across floors. Greedy-nearest pairing assigns
-  toilets to centroids.
+  toilets to centroids. Centroids snap to the nearest walkable navmesh
+  cell so the optimizer never suggests "move the toilet onto the crane".
+  Savings use `navmesh.distance(...)` (path-distance, not euclidean) so
+  the cost number reflects what workers actually walk; falls back to
+  euclidean on sources without a navmesh.
 - **`material_staging.py`** — Picks the zone edge closest to the
   material's current position (preserves gate-side logistics flow).
+  Candidate positions are snapped to walkable cells via
+  `navmesh.nearest_walkable`; scoring uses `navmesh.distance`.
 - **`equipment_schedule.py`** — Flags equipment < 40% utilization for
   release, < 60% for rescheduling. `daily_idle_hours = (1 - utilization)
   × 11h` (stable from t=0).

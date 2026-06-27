@@ -9,6 +9,7 @@ from models.assets import Asset, WorkerState
 from models.connection import Connection
 from models.project_document import ProjectDocument
 from simulation.density import DensityGrid
+from simulation.navmesh import NavMesh
 from simulation.project_loader import build_engine_state
 from simulation.site_factory import (
     create_initial_site,
@@ -120,6 +121,20 @@ class SimulationEngine:
         for c in self.connections:
             for n in c.nodes:
                 self._connections_by_level[n.level_id].append(c)
+
+        # Navmesh per level — workers route around equipment + along
+        # roads instead of walking straight lines through cranes. Built
+        # once here and invalidated on rec apply / project switch (both
+        # paths funnel back through this method, so we don't need a
+        # separate refresh hook).
+        equipment = self._by_type.get("equipment", [])
+        levels = self.site.levels if self.site.levels else [
+            type("_L0", (), {"id": "L0"})()
+        ]
+        self.navmeshes: dict[str, NavMesh] = {
+            lv.id: NavMesh.build(level_id=lv.id, site=self.site, equipment=equipment)
+            for lv in levels
+        }
 
     def load_project(self, project_id: str):
         self.project_id = project_id
@@ -308,6 +323,11 @@ class SimulationEngine:
 
     def connections_from_level(self, level_id: str) -> list[Connection]:
         return list(self._connections_by_level.get(level_id, ()))
+
+    def navmesh_for_level(self, level_id: str) -> NavMesh | None:
+        """Per-level pathfinder (worker FSM + optimizer). None if the
+        level has no navmesh built (shouldn't happen after _rebuild_indexes)."""
+        return self.navmeshes.get(level_id)
 
     def worker_internals_for(self, worker_id: str):
         """Protocol method — typed dataclass in step 3."""

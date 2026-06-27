@@ -10,7 +10,7 @@ detail builder.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from models.assets import Position
 
@@ -24,10 +24,22 @@ class WorkerInternals:
     next_break: float
     next_material: float
 
-    # Current movement target & "I came from here" anchor for trips
+    # Current movement target & "I came from here" anchor for trips.
+    # `target` is always the worker's NEXT waypoint (either the final
+    # destination or an intermediate corner produced by the navmesh).
+    # When the navmesh is active, the full route is in `path` and
+    # `path_index` tracks progress; the FSM walks one waypoint at a
+    # time and advances on arrival.
     target: Position | None = None
     return_position: Position | None = None
     carrying_target: Position | None = None
+
+    # Path-following state (filled by worker_behavior.set_path when a
+    # trip begins; cleared by follow_path on arrival at the last
+    # waypoint). Empty list / index 0 means the worker is not on a
+    # multi-waypoint trip — fallback to legacy single-`target` walk.
+    path: list[Position] = field(default_factory=list)
+    path_index: int = 0
 
     # Counts-down inside dwell states (AT_TOILET, AT_BREAK, picking up material)
     action_timer: float = 0.0

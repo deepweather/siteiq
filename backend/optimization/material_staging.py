@@ -1,11 +1,43 @@
 from math import sqrt
 from models.analytics import Recommendation
+from models.assets import Position
 from state.source import SiteStateSource
 from config import LOADED_HOURLY_RATE, WORKER_SPEED, WORKING_DAYS_PER_MONTH
 
 
 def _distance(x1, y1, x2, y2) -> float:
     return sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+
+
+def _path_distance(
+    source: SiteStateSource,
+    level_id: str,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> float:
+    """Path distance via the per-level navmesh; falls back to euclidean."""
+    nm = source.navmesh_for_level(level_id) if hasattr(source, "navmesh_for_level") else None
+    if nm is None:
+        return _distance(x1, y1, x2, y2)
+    return nm.distance(
+        Position(x=x1, y=y1, level_id=level_id),
+        Position(x=x2, y=y2, level_id=level_id),
+    )
+
+
+def _snap_to_walkable(
+    source: SiteStateSource,
+    level_id: str,
+    x: float,
+    y: float,
+) -> tuple[float, float]:
+    nm = source.navmesh_for_level(level_id) if hasattr(source, "navmesh_for_level") else None
+    if nm is None:
+        return x, y
+    snapped = nm.nearest_walkable(x, y)
+    return snapped if snapped is not None else (x, y)
 
 
 def optimize_material_staging(source: SiteStateSource) -> list[Recommendation]:
@@ -25,7 +57,10 @@ def optimize_material_staging(source: SiteStateSource) -> list[Recommendation]:
 
         zx = zone.x + zone.width / 2
         zy = zone.y + zone.height / 2
-        current_dist = _distance(asset.position.x, asset.position.y, zx, zy)
+        level_id = asset.position.level_id
+        current_dist = _path_distance(
+            source, level_id, asset.position.x, asset.position.y, zx, zy
+        )
         if current_dist < 20:
             continue
 
@@ -46,8 +81,13 @@ def optimize_material_staging(source: SiteStateSource) -> list[Recommendation]:
         for cx, cy in candidates:
             cx = max(2, min(source.site.width - 2, cx))
             cy = max(2, min(source.site.height - 2, cy))
+            # Snap to a walkable cell so we never suggest staging in the
+            # crane's swept area or off-site.
+            cx, cy = _snap_to_walkable(source, level_id, cx, cy)
             # Score = candidate's distance from where the material is now.
-            score = _distance(asset.position.x, asset.position.y, cx, cy)
+            score = _path_distance(
+                source, level_id, asset.position.x, asset.position.y, cx, cy
+            )
             if score < best_pos_score:
                 best_pos_score = score
                 best_pos = (cx, cy)
@@ -56,8 +96,8 @@ def optimize_material_staging(source: SiteStateSource) -> list[Recommendation]:
             continue
 
         opt_x, opt_y = best_pos
-        # Savings calculation uses worker→zone distance (the relevant cost).
-        best_new_dist = _distance(opt_x, opt_y, zx, zy)
+        # Savings calculation uses worker→zone path-distance (the relevant cost).
+        best_new_dist = _path_distance(source, level_id, opt_x, opt_y, zx, zy)
         dist_saved = current_dist - best_new_dist
         if dist_saved < 5:
             continue

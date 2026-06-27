@@ -1,11 +1,34 @@
 from math import sqrt
 from models.analytics import Recommendation
+from models.assets import Position
 from state.source import SiteStateSource
 from config import LOADED_HOURLY_RATE, WORKER_SPEED, WORKING_DAYS_PER_MONTH
 
 
 def _distance(x1, y1, x2, y2) -> float:
+    """Euclidean fallback. Use `_path_distance` when a navmesh is
+    available so recommendations score by what workers actually walk."""
     return sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+
+
+def _path_distance(
+    source: SiteStateSource,
+    level_id: str,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> float:
+    """Path distance via the per-level navmesh. Falls back to euclidean
+    when the source has no navmesh (e.g. a non-simulation SiteStateSource
+    in a future LiveSource)."""
+    nm = source.navmesh_for_level(level_id) if hasattr(source, "navmesh_for_level") else None
+    if nm is None:
+        return _distance(x1, y1, x2, y2)
+    return nm.distance(
+        Position(x=x1, y=y1, level_id=level_id),
+        Position(x=x2, y=y2, level_id=level_id),
+    )
 
 
 def _weighted_centroid(points_weights: list[tuple[float, float, float]]) -> tuple[float, float]:
@@ -16,6 +39,22 @@ def _weighted_centroid(points_weights: list[tuple[float, float, float]]) -> tupl
     cx = sum(x * w for x, y, w in points_weights) / total_w
     cy = sum(y * w for x, y, w in points_weights) / total_w
     return cx, cy
+
+
+def _snap_to_walkable(
+    source: SiteStateSource,
+    level_id: str,
+    x: float,
+    y: float,
+) -> tuple[float, float]:
+    """Move (x, y) to the nearest walkable navmesh cell. Used so
+    recommendations never suggest "move toilet onto crane footprint" or
+    "stage rebar in the fence". No-op when no navmesh is available."""
+    nm = source.navmesh_for_level(level_id) if hasattr(source, "navmesh_for_level") else None
+    if nm is None:
+        return x, y
+    snapped = nm.nearest_walkable(x, y)
+    return snapped if snapped is not None else (x, y)
 
 
 def optimize_toilet_placement(source: SiteStateSource) -> list[Recommendation]:
@@ -81,12 +120,17 @@ def _optimize_for_level(source: SiteStateSource, toilets, zones) -> list[Recomme
         c2x = max(margin, min(source.site.width - margin, c2x))
         c2y = max(margin, min(source.site.height - margin, c2y))
 
-        optimal_positions = [(c1x, c1y), (c2x, c2y)]
+        optimal_positions = [
+            _snap_to_walkable(source, toilets[0].position.level_id, c1x, c1y),
+            _snap_to_walkable(source, toilets[0].position.level_id, c2x, c2y),
+        ]
     else:
         cx, cy = _weighted_centroid(zone_data)
         cx = max(5, min(source.site.width - 5, cx))
         cy = max(5, min(source.site.height - 5, cy))
-        optimal_positions = [(cx, cy)]
+        optimal_positions = [
+            _snap_to_walkable(source, toilets[0].position.level_id, cx, cy)
+        ]
 
     # Assign each toilet to its NEAREST optimal position (greedy by closest
     # pair) rather than by enumeration order — otherwise toilet-1 might be
@@ -115,13 +159,18 @@ def _optimize_for_level(source: SiteStateSource, toilets, zones) -> list[Recomme
         if improvement < 20:
             continue
 
-        # Estimate savings: compute avg distance reduction for all workers
+        # Estimate savings: compute avg PATH-distance reduction for all
+        # workers. Falls back to euclidean when no navmesh is wired up
+        # so legacy tests still pass.
+        level_id = toilet.position.level_id
         total_workers = sum(w for _, _, w in zone_data)
         old_avg_dist = sum(
-            _distance(zx, zy, old_x, old_y) * w for zx, zy, w in zone_data
+            _path_distance(source, level_id, zx, zy, old_x, old_y) * w
+            for zx, zy, w in zone_data
         ) / total_workers
         new_avg_dist = sum(
-            _distance(zx, zy, opt_x, opt_y) * w for zx, zy, w in zone_data
+            _path_distance(source, level_id, zx, zy, opt_x, opt_y) * w
+            for zx, zy, w in zone_data
         ) / total_workers
 
         dist_saved = old_avg_dist - new_avg_dist

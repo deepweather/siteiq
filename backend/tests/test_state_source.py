@@ -102,6 +102,12 @@ class FakeSource:
     def connections_from_level(self, level_id: str):
         return []
 
+    def navmesh_for_level(self, level_id: str):
+        """No navmesh on the fake source — optimizer + worker FSM both
+        fall back to euclidean / straight-line behaviour, which is what
+        these tests asserted before pathfinding existed."""
+        return None
+
 
 def _make_realistic_fake() -> FakeSource:
     src = FakeSource()

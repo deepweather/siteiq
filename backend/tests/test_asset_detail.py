@@ -278,8 +278,9 @@ def test_simulation_engine_loc_is_reasonable():
         `workers_in_level`, `connections_from_level` (~35 LOC)
       - Phase 3: `cabs` instantiation + `_tick_cabs` wrapper (~20 LOC)
       - Phase 6 audit fix: cabs summary in WS state snapshot (~15 LOC)
-    Budget = 340 keeps responsibility creep visible without being too tight."""
+      - Phase 7: per-level NavMesh build + accessor (~17 LOC)
+    Budget = 365 keeps responsibility creep visible without being too tight."""
     from pathlib import Path
     engine_py = Path(__file__).parent.parent / "simulation" / "engine.py"
     loc = sum(1 for _ in engine_py.read_text().splitlines())
-    assert loc <= 340, f"engine.py is {loc} LOC — over the budget of 340"
+    assert loc <= 365, f"engine.py is {loc} LOC — over the budget of 365"

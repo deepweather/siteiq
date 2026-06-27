@@ -6,6 +6,7 @@ import random
 from models.assets import Asset, Position, WorkerState
 from models.connection import Connection
 from models.site import Site, Zone
+from simulation.navmesh import NavMesh
 from simulation.vertical_transport import CabState
 from simulation.worker_internals import WorkerInternals
 from config import (
@@ -43,6 +44,11 @@ class _WorkerEngine(Protocol):
     # transport return an empty list.
     def connections_from_level(self, level_id: str) -> list[Connection]: ...
 
+    # Navmesh accessor (Phase 6 — worker pathfinding). Returns the
+    # per-level grid the FSM routes against. None means "no navmesh
+    # for this level" — caller falls back to straight-line movement.
+    def navmesh_for_level(self, level_id: str) -> NavMesh | None: ...
+
 
 # State handler signature: (worker, internals, dt, engine) -> None
 StateHandler = Callable[[Asset, WorkerInternals, float, _WorkerEngine], None]
@@ -53,7 +59,11 @@ def _jitter(base: float) -> float:
 
 
 def move_toward(worker: Asset, target: Position, dt_sim: float) -> tuple[bool, float]:
-    """Move worker toward target. Returns (arrived, distance_moved)."""
+    """Single-segment movement primitive. Walks worker straight toward
+    the target by at most `WORKER_SPEED * dt_sim` metres. Returns
+    `(arrived, distance_moved)`. Use `follow_path` when a multi-waypoint
+    navmesh route is active; this primitive only moves to a single
+    point and ignores obstacles."""
     dx = target.x - worker.position.x
     dy = target.y - worker.position.y
     dist = sqrt(dx * dx + dy * dy)
@@ -70,6 +80,67 @@ def move_toward(worker: Asset, target: Position, dt_sim: float) -> tuple[bool, f
     worker.position.x += dx * ratio
     worker.position.y += dy * ratio
     return False, move_dist
+
+
+def set_path(
+    worker: Asset,
+    internals: WorkerInternals,
+    engine: _WorkerEngine,
+    destination: Position,
+) -> None:
+    """Compute a navmesh path from the worker's current position to
+    `destination` and stash it in `internals.path`. Sets
+    `internals.target` to the first waypoint so the existing FSM keeps
+    working unchanged via `follow_path`.
+
+    Falls back to a single-target trip (legacy straight-line behaviour)
+    when no navmesh is registered for the worker's level."""
+    nm: NavMesh | None = None
+    if hasattr(engine, "navmesh_for_level"):
+        nm = engine.navmesh_for_level(worker.position.level_id)
+    if nm is None:
+        internals.path = []
+        internals.path_index = 0
+        internals.target = destination
+        return
+    waypoints = nm.path(worker.position, destination)
+    if not waypoints:
+        # path() always returns at least one element, but defend
+        # against the empty case anyway so we don't lock the FSM.
+        internals.path = []
+        internals.path_index = 0
+        internals.target = destination
+        return
+    internals.path = waypoints
+    internals.path_index = 0
+    internals.target = waypoints[0]
+
+
+def follow_path(
+    worker: Asset,
+    internals: WorkerInternals,
+    dt_sim: float,
+) -> tuple[bool, float]:
+    """Walk one tick along `internals.path`, advancing the waypoint
+    index on arrival. Returns `(arrived_at_final, distance_moved)`.
+    When the path is empty / exhausted, falls back to walking to
+    `internals.target` (legacy single-target behaviour)."""
+    if not internals.path:
+        if internals.target is None:
+            return False, 0.0
+        return move_toward(worker, internals.target, dt_sim)
+    target = internals.path[internals.path_index]
+    arrived, dist = move_toward(worker, target, dt_sim)
+    if not arrived:
+        return False, dist
+    # Advance to the next waypoint, or finish the route.
+    internals.path_index += 1
+    if internals.path_index >= len(internals.path):
+        internals.path = []
+        internals.path_index = 0
+        return True, dist
+    internals.target = internals.path[internals.path_index]
+    return False, dist
 
 
 def _find_nearest_facility(worker: Asset, engine: _WorkerEngine, subtype: str) -> Asset | None:
@@ -148,7 +219,7 @@ def _on_working(worker: Asset, internals: WorkerInternals, dt_sim: float, engine
                 worker, internals, engine, final_destination=destination
             ):
                 return
-            internals.target = destination
+            set_path(worker, internals, engine, destination)
             worker.state = WorkerState.WALKING_TO_TOILET
             engine.log_activity(worker.id, f"Walking to {toilet.id}")
             return
@@ -173,7 +244,7 @@ def _on_working(worker: Asset, internals: WorkerInternals, dt_sim: float, engine
                 worker, internals, engine, final_destination=destination
             ):
                 return
-            internals.target = destination
+            set_path(worker, internals, engine, destination)
             worker.state = WorkerState.WALKING_TO_MATERIAL
             engine.log_activity(worker.id, f"Fetching {mat.subtype}")
             return
@@ -195,7 +266,7 @@ def _on_working(worker: Asset, internals: WorkerInternals, dt_sim: float, engine
                 worker, internals, engine, final_destination=destination
             ):
                 return
-            internals.target = destination
+            set_path(worker, internals, engine, destination)
             worker.state = WorkerState.WALKING_TO_BREAK
             engine.log_activity(worker.id, "Walking to break room")
             return
@@ -204,8 +275,7 @@ def _on_working(worker: Asset, internals: WorkerInternals, dt_sim: float, engine
 
 def _on_walking_to_toilet(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
     internals.time_walking += dt_sim
-    assert internals.target is not None
-    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    arrived, dist = follow_path(worker, internals, dt_sim)
     internals.total_distance += dist
     if arrived:
         worker.state = WorkerState.AT_TOILET
@@ -218,15 +288,15 @@ def _on_at_toilet(worker: Asset, internals: WorkerInternals, dt_sim: float, engi
     internals.action_timer -= dt_sim
     if internals.action_timer <= 0:
         worker.state = WorkerState.WALKING_TO_WORK
-        internals.target = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
+        dest = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
+        set_path(worker, internals, engine, dest)
         internals.returning_from = "toilet"
         engine.log_activity(worker.id, "Leaving toilet, returning to work")
 
 
 def _on_walking_to_material(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
     internals.time_walking += dt_sim
-    assert internals.target is not None
-    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    arrived, dist = follow_path(worker, internals, dt_sim)
     internals.total_distance += dist
     if arrived:
         worker.state = WorkerState.CARRYING_MATERIAL
@@ -241,11 +311,16 @@ def _on_carrying_material(worker: Asset, internals: WorkerInternals, dt_sim: flo
         internals.action_timer -= dt_sim
         return
     internals.time_walking += dt_sim
-    target = internals.carrying_target
-    if target is None:
-        target = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
-        internals.carrying_target = target
-    arrived, dist = move_toward(worker, target, dt_sim)
+    # The dwell-just-expired or first-entry case: pick a drop-off target
+    # and lay down a navmesh path. The `not internals.path` guard so we
+    # don't recompute mid-walk after every reached waypoint.
+    if internals.carrying_target is None:
+        internals.carrying_target = _random_point_in_zone(
+            worker.assigned_zone, engine.site.zones
+        )
+    if not internals.path:
+        set_path(worker, internals, engine, internals.carrying_target)
+    arrived, dist = follow_path(worker, internals, dt_sim)
     internals.total_distance += dist
     if arrived:
         trip_time = engine.sim_time - internals.material_trip_start_time
@@ -257,8 +332,7 @@ def _on_carrying_material(worker: Asset, internals: WorkerInternals, dt_sim: flo
 
 def _on_walking_to_break(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
     internals.time_walking += dt_sim
-    assert internals.target is not None
-    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    arrived, dist = follow_path(worker, internals, dt_sim)
     internals.total_distance += dist
     if arrived:
         worker.state = WorkerState.AT_BREAK
@@ -271,15 +345,15 @@ def _on_at_break(worker: Asset, internals: WorkerInternals, dt_sim: float, engin
     internals.action_timer -= dt_sim
     if internals.action_timer <= 0:
         worker.state = WorkerState.WALKING_TO_WORK
-        internals.target = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
+        dest = _random_point_in_zone(worker.assigned_zone, engine.site.zones)
+        set_path(worker, internals, engine, dest)
         internals.returning_from = "break"
         engine.log_activity(worker.id, "Break over, returning to work")
 
 
 def _on_walking_to_work(worker: Asset, internals: WorkerInternals, dt_sim: float, engine: _WorkerEngine) -> None:
     internals.time_walking += dt_sim
-    assert internals.target is not None
-    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    arrived, dist = follow_path(worker, internals, dt_sim)
     internals.total_distance += dist
     if arrived:
         if internals.returning_from == "toilet":
@@ -345,7 +419,10 @@ def _begin_vertical_route(
     node = conn.node_for_level(worker.position.level_id)
     if node is None:
         return False
-    internals.target = Position(x=node.x, y=node.y, level_id=worker.position.level_id)
+    anchor = Position(x=node.x, y=node.y, level_id=worker.position.level_id)
+    # Route to the stair/elevator anchor via the navmesh — workers
+    # walk around equipment + along roads to reach the riser too.
+    set_path(worker, internals, engine, anchor)
     internals.target_level_id = final_destination.level_id
     internals.cross_level_destination = final_destination
     internals.vertical_connection_id = conn.id
@@ -363,8 +440,7 @@ def _on_walking_to_vertical(
     """Walk to the stair / elevator anchor on the worker's current
     level. On arrival, hand off to the right vertical-transport flow."""
     internals.time_walking += dt_sim
-    assert internals.target is not None
-    arrived, dist = move_toward(worker, internals.target, dt_sim)
+    arrived, dist = follow_path(worker, internals, dt_sim)
     internals.total_distance += dist
     if not arrived:
         return
@@ -448,10 +524,17 @@ def _continue_after_vertical(
             worker, internals, engine, final_destination=final_destination
         ):
             return
-    internals.target = Position(
-        x=final_destination.x,
-        y=final_destination.y,
-        level_id=final_destination.level_id,
+    # Same level now: route across this level's navmesh to the final
+    # destination so the worker walks around equipment on the way.
+    set_path(
+        worker,
+        internals,
+        engine,
+        Position(
+            x=final_destination.x,
+            y=final_destination.y,
+            level_id=final_destination.level_id,
+        ),
     )
     internals.target_level_id = None
     internals.cross_level_destination = None

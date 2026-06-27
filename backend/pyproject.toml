@@ -37,12 +37,13 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.mypy]
-# Strict-scoped to the modules that have been refactored to typed state in
-# step 3. Broaden over time. `follow_imports = silent` keeps cascading into
+# Strict-scoped to the modules that have been refactored to typed state.
+# Broaden over time. `follow_imports = silent` keeps cascading into
 # not-yet-refactored modules (models/, optimization/) from blocking us.
 files = [
     "simulation/worker_internals.py",
     "simulation/worker_behavior.py",
+    "simulation/navmesh.py",
     "state/source.py",
 ]
 strict = true

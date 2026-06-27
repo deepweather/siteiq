@@ -6,7 +6,7 @@
  * and drive the human-in-the-loop flows (capture, confirm, reject) plus the
  * demo backfill and conversational query.
  */
-import { getJson, postJson } from './api';
+import { API_BASE, getJson, postJson } from './api';
 
 export type EventStatus = 'proposed' | 'confirmed' | 'rejected' | 'superseded';
 export type EventSource =
@@ -198,3 +198,27 @@ export const recordApi = {
   generateDemo: (days?: number, seed?: number) =>
     postJson<DemoSummary>('/api/record/demo/generate', { days, seed }),
 };
+
+export interface DateRange {
+  since?: string;
+  until?: string;
+}
+
+/** Absolute download URLs for the record exports. Used with `<a download>`
+ *  so the browser saves the file with the auth cookie attached (mirrors
+ *  the audit-log CSV export). The active project scopes them server-side. */
+export const recordExportUrls = {
+  costsCsv: (r?: DateRange) => _exportUrl('costs.csv', r),
+  eventsCsv: (r?: DateRange) => _exportUrl('events.csv', r),
+  eventsJson: (r?: DateRange) => _exportUrl('events.json', r),
+  timesheetsCsv: (r?: DateRange) => _exportUrl('timesheets.csv', r),
+  equipmentCsv: (r?: DateRange) => _exportUrl('equipment.csv', r),
+};
+
+function _exportUrl(file: string, range?: DateRange): string {
+  const sp = new URLSearchParams();
+  if (range?.since) sp.set('since', range.since);
+  if (range?.until) sp.set('until', range.until);
+  const tail = sp.toString();
+  return `${API_BASE}/api/record/exports/${file}${tail ? `?${tail}` : ''}`;
+}

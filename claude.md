@@ -1150,6 +1150,16 @@ Mutating requests carry `credentials: 'include'` + `X-CSRF-Token`.
 | `/api/record/capture` | POST | `RecordPage` capture bar | member+; text → proposed events |
 | `/api/record/query` | POST | `RecordAsk` | Conversational, read-only |
 | `/api/record/demo/generate` | POST | `RecordPage` (admin) | Regenerate demo history |
+| `/api/record/exports/costs.csv` | GET | `ExportMenu` | Cost report; member+; per-worker lines redacted for non-managers |
+| `/api/record/exports/events.csv` | GET | `ExportMenu` | Ledger CSV; member+; tier-filtered |
+| `/api/record/exports/events.json` | GET | `ExportMenu` | Verifiable ledger (hash chain + integrity attestation); member+ |
+| `/api/record/exports/equipment.csv` | GET | `ExportMenu` | Equipment utilization + idle cost; member+ |
+| `/api/record/exports/timesheets.csv` | GET | `ExportMenu` (managers) | Per-worker payroll; admin/owner only |
+
+Exports (`api/record_export.py`) require member+ (viewers can browse on-screen
+but can't pull files out) and are redacted by the same `RecordAccess` tier as
+the views — never a backdoor around the privacy policy. Streamed as RFC 4180
+CSV (mirrors `audit.csv`); the frontend links via `<a download>`.
 
 ### Dev only (`SITEIQ_ENV=dev`)
 

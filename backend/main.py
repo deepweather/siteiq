@@ -32,6 +32,7 @@ from api.health import router as health_router
 from api.projects import router as projects_router
 from api.project_assets import router as project_assets_router
 from api.record import router as record_router
+from api.record_export import router as record_export_router
 from api.request_id import RequestIdMiddleware
 from api.routes import router as api_router
 from api.security_headers import SecurityHeadersMiddleware
@@ -320,6 +321,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(projects_router)
     app.include_router(project_assets_router)
     app.include_router(record_router)
+    app.include_router(record_export_router)
     app.include_router(api_router)
     app.include_router(ws_router)
     app.include_router(camera_router)

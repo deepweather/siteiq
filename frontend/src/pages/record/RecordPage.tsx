@@ -3,6 +3,7 @@ import { useAuth } from '../../lib/auth/AuthProvider';
 import { recordApi } from '../../services/recordApi';
 import { EntityDrawer } from './EntityDrawer';
 import { EntityNavContext } from './entityNav';
+import ExportMenu from './ExportMenu';
 import RecordAsk from './RecordAsk';
 import RecordCosts from './RecordCosts';
 import RecordDirectory from './RecordDirectory';
@@ -102,15 +103,18 @@ export default function RecordPage() {
               projections; cameras will feed the same ledger.
             </p>
           </div>
-          {isAdmin && (
-            <button
-              onClick={onGenerate}
-              disabled={generating}
-              className="text-sm rounded-md border border-border px-3 py-1.5 hover:bg-secondary disabled:opacity-50 whitespace-nowrap"
-            >
-              {generating ? 'Generating…' : 'Generate demo data'}
-            </button>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {canWrite && <ExportMenu isManager={isAdmin} />}
+            {isAdmin && (
+              <button
+                onClick={onGenerate}
+                disabled={generating}
+                className="text-sm rounded-md border border-border px-3 py-1.5 hover:bg-secondary disabled:opacity-50 whitespace-nowrap"
+              >
+                {generating ? 'Generating…' : 'Generate demo data'}
+              </button>
+            )}
+          </div>
         </div>
 
         {canWrite && (

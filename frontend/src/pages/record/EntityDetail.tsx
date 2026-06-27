@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ApiError } from '../../services/api';
 import { recordApi, type EntityProjection } from '../../services/recordApi';
 import { EventRow } from './EventRow';
 import { fmtDate, metricLabel, metricValue, subjectIcon, subjectTypeLabel } from './format';
@@ -16,16 +17,19 @@ export default function EntityDetail({
 }) {
   const [proj, setProj] = useState<EntityProjection | null>(null);
   const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
+  const [error, setError] = useState<'restricted' | 'not_found' | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setNotFound(false);
+    setError(null);
     recordApi
       .getEntity(subjectType, subjectId)
       .then((p) => !cancelled && setProj(p))
-      .catch(() => !cancelled && setNotFound(true))
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof ApiError && e.status === 403 ? 'restricted' : 'not_found');
+      })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
@@ -35,7 +39,15 @@ export default function EntityDetail({
   if (loading) {
     return <div className="px-1 py-6 text-sm text-muted-foreground">Loading…</div>;
   }
-  if (notFound || !proj) {
+  if (error === 'restricted') {
+    return (
+      <div className="px-1 py-8 text-center text-sm text-muted-foreground">
+        <div className="text-2xl mb-2">🔒</div>
+        Individual worker records are restricted to managers on this workspace.
+      </div>
+    );
+  }
+  if (error || !proj) {
     return (
       <div className="px-1 py-6 text-sm text-muted-foreground">
         No record for {subjectType}:{subjectId} yet.

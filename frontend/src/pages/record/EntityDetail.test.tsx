@@ -67,4 +67,17 @@ describe('EntityDetail', () => {
     render(<EntityDetail subjectType="zone" subjectId="zone-x" />);
     expect(await screen.findByText(/No record for zone:zone-x/i)).toBeInTheDocument();
   });
+
+  it('shows a restricted message on a 403 (privacy policy)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: 'forbidden', message: 'nope' } }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    render(<EntityDetail subjectType="worker" subjectId="worker-001" />);
+    expect(
+      await screen.findByText(/Individual worker records are restricted/i),
+    ).toBeInTheDocument();
+  });
 });

@@ -157,3 +157,83 @@ def test_record_routes_require_auth(client):
     r = client.get("/api/record/events")
     assert r.status_code == 401
     assert r.json()["error"]["code"] == "not_authenticated"
+
+
+# ── Tiered visibility policy ─────────────────────────────────────────
+
+
+from contextlib import contextmanager  # noqa: E402
+
+
+@contextmanager
+def _as_role(client, role):
+    """Override the record visibility policy to a given role for the block,
+    so we can exercise crew/supervisor/manager tiers without inviting extra
+    users."""
+    from api.record import get_record_access
+    from services.record_access import RecordAccess
+
+    client.app.dependency_overrides[get_record_access] = lambda: RecordAccess(role)
+    try:
+        yield
+    finally:
+        client.app.dependency_overrides.pop(get_record_access, None)
+
+
+def test_viewer_cannot_see_workers_in_directory(auth_client):
+    _generate(auth_client)
+    with _as_role(auth_client, "viewer"):
+        body = auth_client.get("/api/record/subjects").json()
+    assert all(s["subject_type"] != "worker" for s in body["subjects"])
+    assert "worker" not in body["counts"]
+    assert any(s["subject_type"] == "equipment" for s in body["subjects"])
+
+
+def test_viewer_blocked_from_worker_entity(auth_client):
+    _generate(auth_client)
+    with _as_role(auth_client, "viewer"):
+        r = auth_client.get("/api/record/entities/worker/worker-001")
+        # Equipment is still fine.
+        ok = auth_client.get("/api/record/entities/equipment/crane-1")
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "forbidden"
+    assert ok.status_code == 200
+
+
+def test_viewer_timeline_excludes_worker_events(auth_client):
+    _generate(auth_client)
+    with _as_role(auth_client, "viewer"):
+        ts = auth_client.get("/api/record/events?kind=worker.timesheet&limit=50").json()
+        allev = auth_client.get("/api/record/events?limit=500").json()
+    assert ts["events"] == []
+    assert all(e["subject_type"] != "worker" for e in allev["events"])
+
+
+def test_viewer_costs_have_no_per_worker_lines_but_keep_totals(auth_client):
+    _generate(auth_client)
+    with _as_role(auth_client, "viewer"):
+        costs = auth_client.get("/api/record/costs").json()
+    assert all(l["category"] not in ("labor", "labor_waste") for l in costs["lines"])
+    # Aggregate labour total is still reported.
+    assert costs["labor_cost"] > 0
+
+
+def test_member_sees_worker_but_behavioral_redacted(auth_client):
+    _generate(auth_client)
+    with _as_role(auth_client, "member"):
+        proj = auth_client.get("/api/record/entities/worker/worker-001").json()
+    assert proj["subject_type"] == "worker"
+    assert "total_hours" in proj["metrics"]
+    assert "walking_hours" not in proj["metrics"]
+    ts = [e for e in proj["events"] if e["kind"] == "worker.timesheet"]
+    assert ts and "hours_facilities" not in ts[0]["payload"]
+    assert "hours_walking" not in ts[0]["payload"]
+
+
+def test_manager_sees_full_worker_detail(auth_client):
+    _generate(auth_client)
+    # Default auth_client is the org owner (manager) — no override.
+    proj = auth_client.get("/api/record/entities/worker/worker-001").json()
+    assert "walking_hours" in proj["metrics"]
+    costs = auth_client.get("/api/record/costs").json()
+    assert any(l["category"] == "labor" for l in costs["lines"])

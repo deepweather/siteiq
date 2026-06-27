@@ -605,11 +605,28 @@ flushes every live engine into the ledger every `EVENT_DRAIN_INTERVAL`
 - **`projects.py`** — content-addressed project CRUD (see
   "Editor + multi-level" below).
 - **`record.py`** — system-of-record surface (`/api/record/*`): `events`,
-  `days`, `timeline`, `entities/{type}/{id}`, `inbox`, `events/{id}/confirm`,
-  `events/{id}/reject`, `events` (manual), `costs`, `verify`, `capture`,
-  `query`, `demo/generate`. Reads = member+; writes = member+; demo regen =
+  `days`, `timeline`, `subjects`, `entities/{type}/{id}`, `inbox`,
+  `events/{id}/confirm`, `events/{id}/reject`, `events` (manual), `costs`,
+  `verify`, `capture`, `query`, `demo/generate`. Writes = member+; demo regen =
   admin+. The active stream is `(org.id, source.project_id)`. Every mutation
-  writes an `audit_events` row.
+  writes an `audit_events` row. Reads are filtered through the tiered
+  visibility policy (`Depends(get_record_access)`, see below).
+
+### Record visibility policy — `services/record_access.py`
+Tiered data privacy over the ledger (auth is solved; this is authorization).
+Principle: aggregate + asset data is open, individual worker behavioural data
+is privileged (a GDPR / works-council requirement). `RecordAccess(role)`
+maps the role ladder to three tiers and redacts server-side:
+- **crew** (viewer) — operational only (equipment / materials / zones /
+  inspections / incidents + aggregate costs & headcounts). Worker subjects
+  and `worker.*` events are filtered out; `GET /entities/worker/*` → 403.
+- **supervisor** (member) — the above + individual worker timesheets /
+  presence, but behavioural fields (`hours_facilities/walking/vertical`,
+  the `walking_hours` metric) and per-worker cost lines are stripped.
+- **manager** (admin/owner) — everything.
+Applied in `events`, `timeline`, `inbox`, `subjects`, `entities`, `costs`.
+The frontend mirrors it for affordance (worker links simply don't appear for
+crew; the entity drawer shows a "restricted" card on a 403).
 - **`project_assets.py`** — background image upload + serve. Multipart
   parser via `python-multipart`.
 - **`websocket.py`** — WS `/ws` streams `state_update` at 10 Hz (assets

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import (
     get_capture_parser,
+    get_current_membership,
     get_current_org,
     get_current_user,
     get_query_responder,
@@ -25,7 +26,7 @@ from api.deps import (
     require_role,
 )
 from auth.errors import ApiError
-from db.models import AuditEvent, Org, Role, User
+from db.models import AuditEvent, Org, OrgMembership, Role, User
 from db.session import get_db
 from models.cost import CostBreakdown, RateCard
 from models.project_document import ProjectDocument
@@ -35,6 +36,7 @@ from services.capture import CaptureParser
 from services.cost_engine import compute_costs
 from services.demo_record_generator import RECORD_BACKFILL_DAYS, generate_demo_history
 from services.event_ledger import EventLedger, EventStatusValue
+from services.record_access import RecordAccess
 from services.record_projections import (
     daily_rollup,
     entity_projection,
@@ -50,6 +52,13 @@ router = APIRouter(prefix="/api/record", tags=["record"])
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def get_record_access(
+    membership: OrgMembership = Depends(get_current_membership),
+) -> RecordAccess:
+    """The caller's record visibility policy, derived from their org role."""
+    return RecordAccess(membership.role)
 
 
 async def _audit(
@@ -118,6 +127,7 @@ async def list_events(
     offset: int = 0,
     org: Org = Depends(get_current_org),
     src: SiteStateSource = Depends(get_source),
+    access: RecordAccess = Depends(get_record_access),
     db: AsyncSession = Depends(get_db),
 ):
     ledger = EventLedger(db)
@@ -134,7 +144,8 @@ async def list_events(
         limit=min(max(limit, 1), 1000),
         offset=max(offset, 0),
     )
-    return {"events": [event_to_dict(r) for r in rows], "project_id": src.project_id}
+    events = access.filter_events([event_to_dict(r) for r in rows])
+    return {"events": events, "project_id": src.project_id}
 
 
 @router.get("/days")
@@ -154,6 +165,7 @@ async def get_timeline(
     date: str | None = None,
     org: Org = Depends(get_current_org),
     src: SiteStateSource = Depends(get_source),
+    access: RecordAccess = Depends(get_record_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Flight recorder: every event on a given calendar day (defaults to the
@@ -175,7 +187,8 @@ async def get_timeline(
     rows = await ledger.query(
         org.id, src.project_id, since=since, until=until, order="asc", limit=5000
     )
-    return {"date": date, "events": [event_to_dict(r) for r in rows]}
+    events = access.filter_events([event_to_dict(r) for r in rows])
+    return {"date": date, "events": events}
 
 
 @router.get("/subjects")
@@ -184,6 +197,7 @@ async def list_directory(
     q: str | None = None,
     org: Org = Depends(get_current_org),
     src: SiteStateSource = Depends(get_source),
+    access: RecordAccess = Depends(get_record_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Directory of distinct subjects (workers, equipment, materials, …) for
@@ -196,7 +210,7 @@ async def list_directory(
         statuses=[EventStatusValue.CONFIRMED, EventStatusValue.PROPOSED],
         order="asc", limit=200000,
     )
-    subjects = list_subjects(rows)
+    subjects = access.filter_subjects(list_subjects(rows))
     if q:
         needle = q.lower()
         subjects = [
@@ -218,8 +232,14 @@ async def get_entity(
     subject_id: str,
     org: Org = Depends(get_current_org),
     src: SiteStateSource = Depends(get_source),
+    access: RecordAccess = Depends(get_record_access),
     db: AsyncSession = Depends(get_db),
 ):
+    if not access.can_view_subject_type(subject_type):
+        raise ApiError(
+            403, "forbidden",
+            "Your role doesn't have access to individual worker records.",
+        )
     ledger = EventLedger(db)
     rows = await ledger.query(
         org.id, src.project_id,
@@ -228,13 +248,14 @@ async def get_entity(
     )
     if not rows:
         raise ApiError(404, "entity_not_found", "No events for this subject.")
-    return entity_projection(subject_type, subject_id, rows)
+    return access.redact_entity(entity_projection(subject_type, subject_id, rows))
 
 
 @router.get("/inbox")
 async def get_inbox(
     org: Org = Depends(get_current_org),
     src: SiteStateSource = Depends(get_source),
+    access: RecordAccess = Depends(get_record_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Low-confidence proposed events awaiting human confirmation."""
@@ -243,7 +264,8 @@ async def get_inbox(
         org.id, src.project_id,
         statuses=[EventStatusValue.PROPOSED], order="desc", limit=500,
     )
-    return {"events": [event_to_dict(r) for r in rows]}
+    events = access.filter_events([event_to_dict(r) for r in rows])
+    return {"events": events}
 
 
 @router.get("/costs", response_model=CostBreakdown)
@@ -252,6 +274,7 @@ async def get_costs(
     until: datetime | None = None,
     org: Org = Depends(get_current_org),
     src: SiteStateSource = Depends(get_source),
+    access: RecordAccess = Depends(get_record_access),
     rate_card: RateCard = Depends(get_rate_card),
     db: AsyncSession = Depends(get_db),
 ):
@@ -261,7 +284,7 @@ async def get_costs(
         statuses=[EventStatusValue.CONFIRMED],
         since=since, until=until, order="asc", limit=200000,
     )
-    return compute_costs(rows, rate_card, since=since, until=until)
+    return access.redact_cost(compute_costs(rows, rate_card, since=since, until=until))
 
 
 @router.get("/verify")

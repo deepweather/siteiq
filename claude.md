@@ -91,10 +91,10 @@ Real cameras → YOLO inference → Camera calibration → 2D site map
                               pipeline as simulation mode
 ```
 
-The simulation engine would be replaced by real detection data projected
-onto the site plan. The `SiteStateSource` Protocol seam already supports
-this — a future `LiveSource` drops in by changing only the registry's
-`EngineFactory`.
+The simulation engine is replaced by real detection data projected onto the
+site plan. **This is now implemented** — see "Devices, ingestion + Live Mode":
+device events fold into a `LiveSource` (a `SiteStateSource`) selected per-org
+via `orgs.live_mode`, with the same analytics/optimization/renderer pipeline.
 
 ## Tech stack
 
@@ -332,6 +332,88 @@ TestClient lifespans fast — they fall back to the legacy formula
   it auto-replaces with a 2.5 s "Live again" success.
 - All routes are split via `React.lazy` + `Suspense`. Initial bundle
   ~245 KB (gzip ~78 KB); each settings page is 1–8 KB on its own.
+
+## Devices, ingestion + Live Mode
+
+Physical producers (cameras, gateways, sensors) feed the SAME event ledger
+as the simulation. This is the realisation of the old "#33" debt: a real
+device feed can now drive the dashboard via a `LiveSource`. A device is just
+another ledger producer, scoped to one `(org, project)` stream, append-only,
+that authenticates with a bearer **device token**.
+
+### Device identity + onboarding (`services/device_service.py`)
+Mirrors the session/invite machinery. Tokens are stored only as `sha256`;
+revoke/rotate are single SQL updates. Provisioning = a one-time **claim
+code** (mirror of `OrgInvite`): an admin mints it (`POST /api/devices/claims`,
+returned once + a QR payload), the device exchanges it (`POST /api/ingest/claim`)
+for a long-lived token. `api/deps.get_current_device` resolves
+`Authorization: Bearer <token>` → active `Device` and exposes its fixed
+`(org, project)` scope; ingestion ignores any client-supplied org/project.
+`/api/ingest/*` is **CSRF-exempt** (bearer, not cookie). Every lifecycle
+action writes an `audit_events` row.
+
+### Ingestion API + the single chain-writer (`api/ingest.py`, `services/ingest_writer.py`)
+The hash chain is server-assigned and gap-free per `(org, project)`, so
+devices NEVER write the chain directly (concurrent writers would collide on
+`uq_site_events_stream_seq`). Instead:
+- `POST /api/ingest/events` stages a batch into `device_inbound` (durable,
+  idempotent on `client_event_id`, returns `202 {accepted, duplicates}`).
+- The **single per-stream chain-writer** — `main._run_event_drain_loop`, the
+  same task that drains `engine.pending_events` — folds unprocessed
+  `device_inbound` rows into `site_events` via `EventLedger.append_many`,
+  marking `processed_at`. One coroutine ⇒ device + simulation writes to a
+  stream are serialised ⇒ no `seq` collisions, survives restart.
+- Confidence policy: `>= settings.device_confidence_floor` → `confirmed`,
+  below → `proposed` (lands in the Record Inbox for human review).
+- Also: `POST /api/ingest/blobs` (evidence frames → `device_blobs`,
+  `evidence_ref="blob:<id>"`), `POST /api/ingest/heartbeat` (last-seen +
+  agent version + queue depth), `GET /api/ingest/config` (calibration /
+  model / sampling, ETag-versioned). `services/device_cleanup.py` prunes old
+  blobs (mirrors `outbox_cleanup`).
+
+### Fleet management (`api/devices.py` + Settings → Devices)
+Cookie + `require_role(ADMIN)` admin surface: list (with derived health —
+online/offline by `last_seen`, version, queue depth, events count), mint
+claims, rename, revoke, rotate, set calibration, and serve evidence blobs.
+The frontend `pages/settings/Devices.tsx` (+ `services/devicesApi.ts`)
+renders the fleet, an add-device modal (one-time code + QR + install
+one-liner), and the live health refresh. Evidence thumbnails render on
+`EventRow` in the Record Inbox via `recordApi.evidenceUrl`.
+
+### Live Mode — `state/live_source.py`
+`LiveSource` implements the `SiteStateSource` Protocol by composing a
+non-ticking `SimulationEngine` for the static layout (zones / levels /
+navmesh) and folding recent confirmed ledger events over it (`apply_events`:
+equipment state, worker positions, …). `SourceRegistry` is generalised to
+hold any `SiteStateSource`; `orgs.live_mode` (migration `0008`) selects it,
+and `get_source` builds + refreshes the LiveSource from the ledger per
+request. The tick loop only ticks `SimulationEngine` instances. Toggle via
+`POST /api/simulation/mode {live}` (a `SIM`/`LIVE` button in the MenuBar);
+sim-only controls (speed/pause) already `501` for non-sim sources, and
+analytics/optimization/renderer are unchanged.
+
+### Schema (migrations `0006`–`0008`)
+- `0006_worker_event_idempotency` — `site_events.client_event_id` (+ unique
+  `(org, project, client_event_id)`) for offline-safe replay (worker PWA +
+  devices). Excluded from `event_hash`.
+- `0007_devices` — `devices`, `device_claims`, `device_inbound`,
+  `device_blobs`; nullable `site_events.device_id` provenance (also NOT
+  hashed).
+- `0008_org_live_mode` — `orgs.live_mode`.
+
+### Edge software (`edge/`, separate deliverable)
+The "ledger client = anything holding a device token + speaking
+`/api/ingest`; everything dumber is a sensor behind a gateway" rule. See
+[`edge/README.md`](edge/README.md).
+- `edge/agent` (Go, single static binary): `claim` + `run`; SQLite **outbox**
+  (idempotent on `client_event_id`, same pattern as the PWA), batched upload
+  with exponential backoff, heartbeat, config pull, and a **local ingest**
+  HTTP endpoint (`127.0.0.1:9099`) the sidecar + gateway bridges POST into.
+  Outbound-only. `systemd` unit + Dockerfile.
+- `edge/sidecar` (Python): YOLO (ultralytics) on RTSP/USB/`demo` frames +
+  homography + ByteTrack → discrete `*.position` events → agent local ingest.
+- `edge/gateway` (`mqtt_bridge.py` + `node-map.yaml`) + `edge/firmware/esp32`:
+  dumb nodes publish MQTT/serial/LoRa to a gateway that maps them to events.
 
 ## Backend modules
 
@@ -1095,8 +1177,8 @@ values use `tabular-nums` for stable width.
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend | **384** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, navmesh + path-following + optimizer walkable-clamp, microbench gates, system of record (ledger hash/verify/bitemporal, cost engine, demo generator + backfill-on-switch, capture, query, `/api/record` flow, tiered visibility policy, exports), **worker PWA API (proposed entry → inbox → confirm, crew-write policy, zones-from-site, idempotent replay, magic-link path allow-list)** |
-| Frontend | **136** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, record (recordApi, Directory, EntityDetail, Inbox, Costs, Ask, Timeline, ExportMenu), **worker PWA (workerApi, offlineQueue enqueue/flush/dedupe, EntryWizard online+offline)** |
+| Backend | **398** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, navmesh + path-following + optimizer walkable-clamp, microbench gates, system of record (ledger hash/verify/bitemporal, cost engine, demo generator + backfill-on-switch, capture, query, `/api/record` flow, tiered visibility policy, exports), worker PWA API (proposed entry → inbox → confirm, crew-write, zones-from-site, idempotent replay, magic-link path), **device ingestion (claim → token, staging idempotency, chain-writer fold + gap-free seq + verify, confidence routing, fleet authz) + LiveSource (Protocol conformance, event fold, sim/live toggle)** |
+| Frontend | **142** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, record (recordApi, Directory, EntityDetail, Inbox, Costs, Ask, Timeline, ExportMenu), worker PWA (workerApi, offlineQueue enqueue/flush/dedupe, EntryWizard online+offline), **device fleet (devicesApi, Devices list + claim modal)** |
 
 Mypy strict scoped to `simulation/worker_internals.py`,
 `simulation/worker_behavior.py`, `simulation/navmesh.py`,
@@ -1123,10 +1205,11 @@ Microbench gates locked in:
 
 ## Open architectural debt
 
-- **#33 — Camera feeds are disconnected from simulation.** The core
-  coherence problem. The `SiteStateSource` Protocol seam already supports
-  a future `LiveSource` that would replace the simulation engine with
-  calibrated YOLO detections projected onto the 2D map.
+- **#33 — Camera feeds → simulation: RESOLVED.** Real devices now feed the
+  ledger (`/api/ingest`) and drive the dashboard via `LiveSource` + `orgs.live_mode`
+  (see "Devices, ingestion + Live Mode"). Remaining work is richer fusion:
+  multi-camera worker re-identification and a proper pixel→meter calibration
+  authoring UI (today calibration is a stored homography pushed to the agent).
 - **#35 — No 2FA UI yet.** The `users.totp_secret` column exists; the
   UI is intentionally hidden behind a future feature flag.
 - **#36 — No billing.** `orgs.plan` exists (`trial|pro|enterprise`) but
@@ -1250,6 +1333,30 @@ CSV (mirrors `audit.csv`); the frontend links via `<a download>`.
 | `/api/worker/assets/{type}/{id}` | GET | worker `AssetDetail` | Entity projection; worker subjects 403 for crew |
 | `/api/worker/my-entries` | GET | worker `MyEntries` | Caller's recent submissions + their review status |
 | `/api/worker/entry` | POST | worker `EntryWizard` (via `offlineQueue`) | member/viewer+; forced `proposed` + `source="human"`; idempotent on `client_event_id` |
+
+### Device ingestion (bearer device token, CSRF-exempt)
+
+Called server-to-server by edge agents/gateways, not the browser.
+
+| Backend route | Method | Caller | Notes |
+|--------------|--------|--------|-------|
+| `/api/ingest/claim` | POST | edge agent (`claim`) | Exchanges a one-time claim code for a device token |
+| `/api/ingest/events` | POST | edge agent (outbox flush) | Batch → `device_inbound`; idempotent on `client_event_id`; `202` |
+| `/api/ingest/blobs` | POST | edge agent | Evidence frame/clip → `device_blobs`; returns `blob:<id>` |
+| `/api/ingest/heartbeat` | POST | edge agent | last-seen + agent version + queue depth |
+| `/api/ingest/config` | GET | edge agent | Calibration / model / sampling (ETag-versioned) |
+
+### Device fleet (cookie + admin) + Live Mode
+
+| Backend route | Method | Frontend caller | Notes |
+|--------------|--------|----------------|-------|
+| `/api/devices` | GET | `Devices.tsx` | List with derived health, version, queue, event count; member+ |
+| `/api/devices/claims` | POST | `Devices.tsx` (Add device) | Mint a one-time claim code (+QR); admin+ |
+| `/api/devices/{id}` | GET/PATCH/DELETE | `Devices.tsx` | Detail / rename / revoke; admin+ for mutations |
+| `/api/devices/{id}/rotate` | POST | `Devices.tsx` | Issue a fresh token; admin+ |
+| `/api/devices/{id}/calibration` | PUT | (calibration UI) | Store homography/zone config; admin+ |
+| `/api/devices/blobs/{id}` | GET | `EventRow` evidence thumb | Serves evidence bytes; member+ |
+| `/api/simulation/mode` | GET/POST | `MenuBar` SIM/LIVE toggle | Per-org `live_mode`; next `get_source` swaps engine ↔ LiveSource |
 
 ### Dev only (`SITEIQ_ENV=dev`)
 

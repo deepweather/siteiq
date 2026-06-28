@@ -1,6 +1,17 @@
 # SiteIQ — Construction Site Intelligence
 
-Real-time construction site monitoring and optimization demo. Uses a simulation engine to generate asset position data, compute waste analytics, and prescribe operational fixes.
+Real-time construction site monitoring and optimization. A simulation engine
+generates asset position data, computes waste analytics, and prescribes
+operational fixes — and the same pipeline can be driven by **real devices**
+(cameras / gateways / sensors) in **Live Mode**.
+
+Three frontends/clients talk to one backend + one event ledger:
+- the **dashboard** (`/`) — the optimization story for managers,
+- the **worker PWA** (`/worker/`) — an offline-first field-crew app,
+- **edge agents** (`edge/`) — on-device software that posts to `/api/ingest`.
+
+For the full architecture see [`claude.md`](claude.md); for on-device
+software see [`edge/README.md`](edge/README.md).
 
 ## Quick Start
 
@@ -36,7 +47,7 @@ just resets the password — handy after wiping `siteiq.db`. Override
 `SITEIQ_DEMO_EMAIL`, `SITEIQ_DEMO_PASSWORD`, `SITEIQ_DEMO_NAME`, or
 `SITEIQ_DEMO_COMPANY` if you want different defaults.
 
-### Frontend
+### Frontend (dashboard)
 ```bash
 cd frontend
 npm install
@@ -44,6 +55,43 @@ npm run dev
 ```
 
 Open http://localhost:5173
+
+### Worker app (field-crew PWA)
+
+A separate, same-origin bundle served under `/worker/` — offline-first,
+German-first (with an EN toggle), big-button entry capture, and asset/material
+lookup. Crew entries land as `proposed` in the supervisor's Record Inbox.
+
+```bash
+cd frontend
+npm run dev:worker     # dev server, open http://localhost:5174/worker/
+npm run build:worker   # production bundle -> dist/worker (served at /worker/)
+```
+
+Log in with a magic link (in dev, the link appears at
+`http://localhost:8000/dev/outbox`). It installs to a phone home screen and
+keeps a local outbox so entries survive dead zones and sync on reconnect.
+
+### Edge devices (cameras / gateways / sensors)
+
+On-site software that authenticates with a one-time **claim code** (minted in
+the UI under **Settings → Devices**) and posts events to `/api/ingest`. Flip
+the dashboard to **Live Mode** (the `SIM`/`LIVE` toggle in the menu bar) to
+drive it from real device data instead of the simulation.
+
+```bash
+# 1. Settings -> Devices -> Add device -> copy the claim code.
+# 2. Build + run the Go agent on the device:
+cd edge/agent && go build -o siteiq-agent .
+./siteiq-agent claim --server http://localhost:8000 --code <CODE>
+./siteiq-agent run   --server http://localhost:8000
+# 3. (camera) run the CV sidecar against a stream or the demo videos:
+cd ../sidecar && pip install -r requirements.txt
+python sidecar.py --source demo --agent http://127.0.0.1:9099
+```
+
+See [`edge/README.md`](edge/README.md) for the gateway/ESP32 tiers, Docker
+images, and the full device contract.
 
 ### Production stack via Docker Compose
 
@@ -65,9 +113,15 @@ The compose file mirrors a real prod deployment:
 
 ## Architecture
 
-- **Backend**: Python/FastAPI with in-memory simulation engine running at 10Hz, managed by `uv`
-- **Frontend**: React/TypeScript/Vite with HTML5 Canvas rendering and Tailwind CSS
-- **Communication**: WebSocket for real-time position + analytics streaming, REST for recommendations and controls
+- **Backend**: Python/FastAPI; per-org `SimulationEngine` at 10 Hz OR a
+  device-fed `LiveSource` (both implement one `SiteStateSource` seam); an
+  append-only, hash-chained event ledger as the system of record. Managed by `uv`.
+- **Frontend**: React/TypeScript/Vite — dashboard (Canvas + Tailwind) and a
+  separate worker PWA (`vite-plugin-pwa`, IndexedDB outbox).
+- **Edge**: a Go agent (durable SQLite outbox) + Python CV sidecar (YOLO) +
+  gateway bridge for low-power sensors.
+- **Communication**: WebSocket for live position + analytics streaming; REST
+  for recommendations, controls, the record, and device ingestion.
 
 ## Demo Flow
 

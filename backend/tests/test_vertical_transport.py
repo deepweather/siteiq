@@ -12,7 +12,7 @@ from models.project_document import (
 )
 from models.site import Discipline, Level, Phase, Zone
 from simulation.engine import SimulationEngine
-from simulation.worker_behavior import _begin_vertical_route, _find_connection_to
+from simulation.worker_behavior import _find_connection_to
 
 
 def _doc_with_two_floors_and_stair() -> ProjectDocument:

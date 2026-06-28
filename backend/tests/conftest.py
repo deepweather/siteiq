@@ -7,7 +7,6 @@ routes with a real session cookie.
 """
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 # Make backend imports work like the live app

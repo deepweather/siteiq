@@ -12,7 +12,7 @@ the insight rather than auto-mutate the project.
 from __future__ import annotations
 
 from analytics.vertical_metrics import compute_vertical_metrics
-from config import LOADED_HOURLY_RATE, WORKING_DAYS_PER_MONTH
+from config import WORKING_DAYS_PER_MONTH
 from models.analytics import Recommendation
 from state.source import SiteStateSource
 

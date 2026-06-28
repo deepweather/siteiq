@@ -1,7 +1,6 @@
 """orgs.active_project_id survives a backend restart."""
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
 
 
 def _csrf(client):

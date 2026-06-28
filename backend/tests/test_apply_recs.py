@@ -16,10 +16,9 @@ from __future__ import annotations
 import time
 
 from analytics.aggregator import compute_waste_summary
-from models.assets import EquipmentState, Position
+from models.assets import EquipmentState
 from models.connection import Connection, ConnectionNode
 from models.project_document import (
-    EquipmentSpec,
     FacilitySpec,
     ProjectDocument,
     WorkerSeed,

@@ -12,7 +12,7 @@ import uuid
 from datetime import timedelta
 from typing import Optional
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import email_templates
@@ -25,7 +25,6 @@ from db.models import (
     AuditEvent,
     AuthSession,
     Org,
-    OrgInvite,
     OrgMembership,
     Plan,
     Role,

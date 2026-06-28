@@ -1,8 +1,6 @@
 """Tests for the cumulative heatmap (density grid) feature."""
 from __future__ import annotations
 
-import pytest
-from fastapi.testclient import TestClient
 
 from simulation.engine import SimulationEngine
 

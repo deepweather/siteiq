@@ -10,7 +10,6 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import (
-    get_current_membership,
     get_current_org,
     get_current_session,
     get_current_user,

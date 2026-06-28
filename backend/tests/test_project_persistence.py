@@ -5,7 +5,6 @@ optimistic concurrency control on save, and the activate flow.
 """
 from __future__ import annotations
 
-import pytest
 
 from models.assets import DEFAULT_LEVEL_ID
 from models.project_document import ProjectDocument, WorkerSeed

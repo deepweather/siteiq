@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from analytics.aggregator import compute_waste_summary
 from analytics.vertical_metrics import compute_vertical_metrics
-from models.assets import DEFAULT_LEVEL_ID
 from models.connection import Connection, ConnectionNode
 from models.project_document import (
     FacilitySpec,

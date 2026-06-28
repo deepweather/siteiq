@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from models.assets import DEFAULT_LEVEL_ID
 from models.connection import Connection
-from models.site import Discipline, Level, Phase, Road, ScheduleEntry, Zone
+from models.site import Discipline, Level, Road, ScheduleEntry, Zone
 
 
 SCHEMA_VERSION = 1

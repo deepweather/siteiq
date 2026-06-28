@@ -11,7 +11,7 @@ Errors flow through `ApiError` (typed envelope).
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field
@@ -23,7 +23,6 @@ from api.deps import (
     get_current_user,
     get_email_sender,
     get_optional_session,
-    get_settings,
 )
 from auth import service as svc
 from auth.csrf import CSRF_COOKIE, generate_csrf_token
@@ -37,7 +36,7 @@ from auth.sessions import (
     revoke_session,
     set_session_cookie,
 )
-from db.models import AuthSession, OrgMembership, Role, User
+from db.models import AuthSession, OrgMembership, User
 from db.session import get_db
 
 

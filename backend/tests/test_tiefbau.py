@@ -4,7 +4,7 @@ Covers the new dewatering-pump duty cycle, the shoring-compliance KPI,
 and the new Munich sewer seed end-to-end."""
 from __future__ import annotations
 
-from models.assets import EquipmentState, Position
+from models.assets import EquipmentState
 from models.project_document import (
     EquipmentSpec,
     ProjectDocument,

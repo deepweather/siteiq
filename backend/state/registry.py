@@ -19,7 +19,6 @@ from typing import Callable
 from models.project_document import ProjectDocument
 from services.recommendation_service import RecommendationService
 from simulation.engine import SimulationEngine
-from state.source import SiteStateSource
 
 
 logger = logging.getLogger("siteiq.state.registry")

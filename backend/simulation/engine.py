@@ -3,9 +3,9 @@ from collections import defaultdict, deque
 
 from config import (
     SIM_SECONDS_PER_TICK, WORKDAY_START, WORKDAY_END,
-    MAX_TRAIL_LENGTH, SIM_TICK_INTERVAL, ANALYTICS_UPDATE_INTERVAL,
+    MAX_TRAIL_LENGTH, SIM_TICK_INTERVAL,
 )
-from models.assets import Asset, WorkerState
+from models.assets import Asset
 from models.connection import Connection
 from models.project_document import ProjectDocument
 from simulation.density import DensityGrid
@@ -13,8 +13,6 @@ from simulation.event_emit import emit_end_of_day
 from simulation.navmesh import NavMesh
 from simulation.project_loader import build_engine_state
 from simulation.site_factory import (
-    create_initial_site,
-    create_site_from_template,
     create_site_from_template_with_connections,
 )
 from simulation.tiefbau_behavior import update_tiefbau_equipment

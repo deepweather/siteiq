@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
-import pytest
 
 from analytics.aggregator import compute_waste_summary
 from analytics.travel import compute_travel_metrics

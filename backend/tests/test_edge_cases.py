@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import pytest
 
-from config import SIM_SECONDS_PER_TICK, WORKER_SPEED, TOILET_INTERVAL
+from config import SIM_SECONDS_PER_TICK
 from models.assets import EquipmentState, Position, WorkerState
 from optimization.equipment_schedule import optimize_equipment
 from optimization.facility_placement import optimize_toilet_placement

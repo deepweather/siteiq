@@ -30,7 +30,6 @@ from db.models import (
     Org,
     OrgInvite,
     OrgMembership,
-    Plan,
     Role,
     User,
 )

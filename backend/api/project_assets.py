@@ -21,7 +21,6 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Header, Response, UploadFile
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_org, get_current_user, require_role

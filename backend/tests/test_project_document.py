@@ -11,9 +11,7 @@ from __future__ import annotations
 from models.assets import DEFAULT_LEVEL_ID
 from models.connection import Connection, ConnectionNode
 from models.project_document import (
-    EquipmentSpec,
     FacilitySpec,
-    MaterialSpec,
     ProjectDocument,
     WorkerSeed,
     validate_document,

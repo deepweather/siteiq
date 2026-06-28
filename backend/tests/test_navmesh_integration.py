@@ -7,14 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import pytest
 
 from models.assets import Asset, Position, WorkerState
 from models.site import Discipline, Level, Phase, Site, Zone
 from simulation.engine import SimulationEngine
 from simulation.navmesh import NavMesh
 from simulation.worker_behavior import (
-    _on_walking_to_toilet,
     _on_working,
     follow_path,
     set_path,

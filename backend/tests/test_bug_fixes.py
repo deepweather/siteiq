@@ -9,7 +9,7 @@ import math
 import pytest
 
 from config import SIM_SECONDS_PER_TICK, TOILET_INTERVAL
-from models.assets import Asset, EquipmentState, Position, WorkerState
+from models.assets import EquipmentState, Position, WorkerState
 from models.analytics import PositionXY, Recommendation
 from optimization.equipment_schedule import optimize_equipment
 from optimization.facility_placement import optimize_toilet_placement

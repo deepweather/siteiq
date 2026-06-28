@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
 from sqlalchemy import text
 
 from db.engine import create_db_engine

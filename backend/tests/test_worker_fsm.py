@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import pytest
 
 from models.assets import Asset, Position, WorkerState
 from models.site import Site, Zone

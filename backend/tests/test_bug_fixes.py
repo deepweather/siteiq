@@ -153,7 +153,7 @@ def test_bug12_toilets_assigned_to_nearest_centroid():
         # nearest-pairing keeps toilet-1 right-ish and toilet-2 left-ish
         site_mid = 240 / 2
         # The right-side target should be assigned to the right-side toilet
-        assert (t1.to_position.x >= site_mid) == True or (t2.to_position.x < site_mid) == True, (
+        assert t1.to_position.x >= site_mid or t2.to_position.x < site_mid, (
             f"order-based assignment detected: t1→{t1.to_position}, t2→{t2.to_position}"
         )
 

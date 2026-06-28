@@ -106,6 +106,10 @@ class Org(Base):
     active_project_version_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True
     )
+    # When true, the org's dashboard is driven by a `LiveSource` (real
+    # device-fed events folded over the project layout) instead of the
+    # `SimulationEngine`. See `state/live_source.py`.
+    live_mode: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )
@@ -383,6 +387,14 @@ class SiteEvent(Base):
         UniqueConstraint(
             "org_id", "project_id", "seq", name="uq_site_events_stream_seq"
         ),
+        # Offline-safe idempotency for human-submitted entries (worker PWA).
+        # NULLs are allowed-multiple in both SQLite and Postgres, so every
+        # simulation/generator event (NULL key) is unaffected; only entries
+        # carrying a client-generated key are deduped on replay.
+        UniqueConstraint(
+            "org_id", "project_id", "client_event_id",
+            name="uq_site_events_client_event_id",
+        ),
         Index(
             "ix_site_events_stream_occurred",
             "org_id",
@@ -431,6 +443,17 @@ class SiteEvent(Base):
     actor_user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Client-generated idempotency key. Set only by human-submitted entries
+    # (the worker PWA) so an offline outbox can safely replay a POST without
+    # creating a duplicate. NULL for machine sources. Deliberately NOT part
+    # of the hash chain (it is a dedupe key, not site content) — same
+    # rationale as `status`.
+    client_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Provenance: which device produced this event (camera/gateway/sensor),
+    # or NULL for simulation/generator/human. Like `client_event_id`, this is
+    # metadata and is NOT part of `event_hash` — the hashed content is what
+    # happened, not which box reported it, so existing chains stay valid.
+    device_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     prev_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
@@ -462,6 +485,157 @@ class ProjectVersion(Base):
     created_by_user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Devices — physical producers (cameras, gateways, sensors) that append
+# into the ledger. A device authenticates with a bearer token (hashed at
+# rest, like sessions) and is scoped to exactly one (org, project) stream.
+# It can ONLY append; it never reads other orgs and never confirms/rejects.
+# ──────────────────────────────────────────────────────────────────────
+
+
+class DeviceKind(str, enum.Enum):
+    CAMERA = "camera"      # smart edge: YOLO + calibration on-device
+    GATEWAY = "gateway"    # aggregates dumb sensors over a local bus
+    SENSOR = "sensor"      # a direct (ESP32-class) sensor
+
+
+class DeviceStatus(str, enum.Enum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
+class Device(Base):
+    __tablename__ = "devices"
+    __table_args__ = (
+        Index("ix_devices_org_id", "org_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
+    )
+    # Stream key within the org (the engine/seed slug or project uuid the
+    # device's events belong to). Mirrors `site_events.project_id`.
+    project_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    capabilities: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    token_hash: Mapped[str] = mapped_column(
+        String(128), unique=True, index=True, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=DeviceStatus.ACTIVE.value
+    )
+    agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    queue_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Pixel->meter homography + zone polygons + model/sampling config, pushed
+    # to the agent via GET /api/ingest/config.
+    calibration: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class DeviceClaim(Base):
+    """One-time provisioning code (mirror of OrgInvite). An admin mints it;
+    the device exchanges it for a long-lived device token via
+    POST /api/ingest/claim."""
+
+    __tablename__ = "device_claims"
+    __table_args__ = (
+        Index("ix_device_claims_org_id", "org_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+
+
+class DeviceInbound(Base):
+    """Durable ingestion staging. Devices append here (cheap, idempotent
+    INSERT); a single per-stream chain-writer folds unprocessed rows into
+    the hash-chained `site_events`. Decoupling ingestion from chaining keeps
+    `seq` gap-free without locking the device-facing hot path and survives
+    a restart (unlike the in-memory engine buffer)."""
+
+    __tablename__ = "device_inbound"
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id", "project_id", "client_event_id",
+            name="uq_device_inbound_client_event_id",
+        ),
+        Index("ix_device_inbound_unprocessed", "processed_at"),
+        Index("ix_device_inbound_stream", "org_id", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    device_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
+    )
+    client_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    envelope: Mapped[dict] = mapped_column(JSON, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class DeviceBlob(Base):
+    """Evidence frame/clip referenced by an event's `evidence_ref`. Stored
+    in-DB (LargeBinary) like ProjectAsset so the org-delete cascade drops it
+    and a retention task prunes old media. Keeps the ledger itself lean."""
+
+    __tablename__ = "device_blobs"
+    __table_args__ = (
+        Index("ix_device_blobs_org_id", "org_id"),
+        Index("ix_device_blobs_created_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orgs.id", ondelete="CASCADE"), nullable=False
+    )
+    device_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("devices.id", ondelete="SET NULL"), nullable=True
+    )
+    content_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )

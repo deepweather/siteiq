@@ -43,6 +43,12 @@ BEHAVIORAL_METRICS = {"walking_hours"}
 # Cost line categories that attribute euros to an individual worker.
 PERSONAL_COST_CATEGORIES = {"labor", "labor_waste"}
 
+# Entry kinds the worker PWA is allowed to submit. These map to the same
+# operational event kinds the RuleBasedCaptureParser already produces, and
+# are always written as `proposed` so a supervisor confirms them. Crew
+# (viewer) may submit these; nothing personal/behavioural is writable here.
+WORKER_ENTRY_KINDS = {"delivery", "incident", "inspection", "note"}
+
 
 class RecordAccess:
     """Per-request visibility policy derived from the caller's org role."""
@@ -61,6 +67,15 @@ class RecordAccess:
         if subject_type in PERSONAL_SUBJECT_TYPES:
             return self.can_see_personal
         return True
+
+    # ── worker entry submission (crew-write, always proposed) ─────────
+
+    @staticmethod
+    def can_submit_entry(kind: str) -> bool:
+        """Whether a field worker may submit an entry of this kind. Any org
+        member (viewer+) may submit the allow-listed kinds; the route forces
+        them to `proposed` for supervisor review."""
+        return kind in WORKER_ENTRY_KINDS
 
     def filter_subjects(self, subjects: list[dict]) -> list[dict]:
         if self.can_see_personal:
@@ -120,6 +135,7 @@ class RecordAccess:
         if self.is_manager:
             return breakdown
         breakdown.lines = [
-            l for l in breakdown.lines if l.category not in PERSONAL_COST_CATEGORIES
+            line for line in breakdown.lines
+            if line.category not in PERSONAL_COST_CATEGORIES
         ]
         return breakdown

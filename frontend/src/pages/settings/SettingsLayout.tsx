@@ -8,6 +8,7 @@ import { auth, clearCsrfCache, fetchVersion, type VersionInfo } from '../../serv
 const NAV = [
   { to: '/app/settings/account', label: 'Account' },
   { to: '/app/settings/team', label: 'Team', adminOnly: true },
+  { to: '/app/settings/devices', label: 'Devices' },
   { to: '/app/settings/orgs', label: 'Workspaces' },
   { to: '/app/settings/sessions', label: 'Sessions' },
 ];

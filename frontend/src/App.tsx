@@ -37,6 +37,7 @@ const AccountSettings = lazy(() => import('./pages/settings/AccountSettings'));
 const TeamSettings = lazy(() => import('./pages/settings/TeamSettings'));
 const OrgSwitcher = lazy(() => import('./pages/settings/OrgSwitcher'));
 const Sessions = lazy(() => import('./pages/settings/Sessions'));
+const Devices = lazy(() => import('./pages/settings/Devices'));
 
 function Splash() {
   return (
@@ -91,6 +92,7 @@ export default function App() {
                   <Route index element={<Navigate to="account" replace />} />
                   <Route path="account" element={<Lazy><AccountSettings /></Lazy>} />
                   <Route path="team" element={<Lazy><TeamSettings /></Lazy>} />
+                  <Route path="devices" element={<Lazy><Devices /></Lazy>} />
                   <Route path="orgs" element={<Lazy><OrgSwitcher /></Lazy>} />
                   <Route path="sessions" element={<Lazy><Sessions /></Lazy>} />
                 </Route>

@@ -140,8 +140,8 @@ export const auth = {
   logout: () => postJson<{ status: string }>('/auth/logout').finally(clearCsrfCache),
   forgotPassword: (email: string) =>
     postJson<{ status: string }>('/auth/forgot-password', { email }),
-  requestMagicLink: (email: string) =>
-    postJson<{ status: string }>('/auth/request-magic-link', { email }),
+  requestMagicLink: (email: string, path?: string) =>
+    postJson<{ status: string }>('/auth/request-magic-link', { email, path }),
   loginWithToken: (token: string) =>
     postJson<MeResponse>('/auth/login-with-token', { token }),
   resetPassword: (token: string, password: string) =>
@@ -317,6 +317,16 @@ export async function setSimSpeed(speed: number): Promise<void> {
 
 export async function togglePause(): Promise<void> {
   await postJson('/api/simulation/pause');
+}
+
+/** Live mode: when on, the dashboard is driven by a device-fed LiveSource
+ *  instead of the simulation. */
+export function getSimMode(): Promise<{ live: boolean }> {
+  return getJson<{ live: boolean }>('/api/simulation/mode');
+}
+
+export async function setSimMode(live: boolean): Promise<void> {
+  await postJson('/api/simulation/mode', { live });
 }
 
 export interface CameraInfo {

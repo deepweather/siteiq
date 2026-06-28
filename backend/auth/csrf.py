@@ -39,6 +39,10 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 EXEMPT_PREFIXES: tuple[str, ...] = (
     "/ws",
     "/auth/csrf",
+    # Device ingestion uses bearer-token auth (no cookie), so CSRF — which
+    # protects cookie-authenticated browser requests — does not apply. These
+    # are called server-to-server by edge agents, not from a browser origin.
+    "/api/ingest",
 )
 
 

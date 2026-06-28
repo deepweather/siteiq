@@ -19,6 +19,7 @@ from typing import Callable
 from models.project_document import ProjectDocument
 from services.recommendation_service import RecommendationService
 from simulation.engine import SimulationEngine
+from state.live_source import LiveSource
 
 
 logger = logging.getLogger("siteiq.state.registry")
@@ -59,7 +60,9 @@ class SourceRegistry:
         on first creation to seed it from a persisted org choice; later
         calls ignore it."""
         eng = self._engines.get(org_id)
-        if eng is None:
+        # Rebuild when missing OR when the cached source is a LiveSource (the
+        # org just switched back to simulation mode).
+        if eng is None or isinstance(eng, LiveSource):
             if project_id:
                 eng = SimulationEngine(project_id=project_id)
             else:
@@ -88,7 +91,7 @@ class SourceRegistry:
         seed-slug-based load_project endpoint.
         """
         eng = self._engines.get(org_id)
-        if eng is not None and eng.project_version_id == version_id:
+        if isinstance(eng, SimulationEngine) and eng.project_version_id == version_id:
             return eng
         # Engines created via the legacy slug seed path (`for_org`) don't
         # tag themselves with the seed's content-hash version, so a
@@ -100,7 +103,7 @@ class SourceRegistry:
         # the same document this method is about to load. Tag it instead
         # of rebuilding.
         if (
-            eng is not None
+            isinstance(eng, SimulationEngine)
             and eng.project_version_id is None
             and eng.project_id == document.slug
         ):
@@ -129,7 +132,36 @@ class SourceRegistry:
         )
         return new_eng
 
-    def set(self, org_id: str, source: SimulationEngine) -> None:
+    def for_org_live(
+        self,
+        org_id: str,
+        *,
+        document: ProjectDocument,
+        version_id: str | None,
+    ) -> LiveSource:
+        """Return (or build) the org's LiveSource for `document`. Replaces a
+        SimulationEngine or a stale LiveSource. Caller refreshes it from the
+        ledger via `LiveSource.apply_events`."""
+        existing = self._engines.get(org_id)
+        if (
+            isinstance(existing, LiveSource)
+            and existing.project_id == document.slug
+            and existing.project_version_id == version_id
+        ):
+            return existing
+        if isinstance(existing, SimulationEngine):
+            existing.running = False
+        src = LiveSource(document, project_version_id=version_id)
+        self._engines[org_id] = src
+        self._rec_services[org_id] = RecommendationService(src)
+        self._latest_analytics.pop(org_id, None)
+        logger.info(
+            "live_source_created",
+            extra={"org_id": org_id, "slug": document.slug},
+        )
+        return src
+
+    def set(self, org_id: str, source) -> None:
         """Test hook: replace (or pre-seed) a source for an org."""
         self._engines[org_id] = source
         self._rec_services[org_id] = RecommendationService(source)
@@ -180,7 +212,9 @@ async def run_loops_for_registry(
     """
     while True:
         for engine in registry.all_engines():
-            if engine.running and not engine.paused:
+            # LiveSource (and any non-simulation source) is never ticked —
+            # its state changes via `apply_events`, not a clock.
+            if isinstance(engine, SimulationEngine) and engine.running and not engine.paused:
                 try:
                     engine.tick()
                 except Exception:

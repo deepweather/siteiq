@@ -45,8 +45,10 @@ def verify_email(name: str, frontend_origin: str, token: str) -> Tuple[str, str,
     return subject, html, text
 
 
-def magic_link(name: str, frontend_origin: str, token: str) -> Tuple[str, str, str]:
-    link = f"{frontend_origin}/magic-link?token={token}"
+def magic_link(
+    name: str, frontend_origin: str, token: str, path: str = "/magic-link"
+) -> Tuple[str, str, str]:
+    link = f"{frontend_origin}{path}?token={token}"
     subject = "Sign in to SiteIQ"
     text = (
         f"Hi {name},\n\n"

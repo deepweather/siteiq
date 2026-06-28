@@ -89,3 +89,36 @@ def test_magic_link_token_is_single_use(client):
     r2 = client.post("/auth/login-with-token", json={"token": token}, headers=h2)
     assert r2.status_code == 400
     assert r2.json()["error"]["code"] == "token_used"
+
+
+def test_magic_link_honours_worker_path(client):
+    """The worker PWA asks the link to land at /worker/login."""
+    _signup(client)
+    h = _csrf(client)
+    client.post(
+        "/auth/request-magic-link",
+        json={"email": CRED["email"], "path": "/worker/login"},
+        headers=h,
+    )
+    row = next(
+        r for r in _outbox_for(client, CRED["email"])
+        if "sign in" in r["subject"].lower()
+    )
+    assert "/worker/login?token=" in row["text"]
+
+
+def test_magic_link_rejects_unknown_path(client):
+    """An off-list path falls back to the default (no open redirect)."""
+    _signup(client)
+    h = _csrf(client)
+    client.post(
+        "/auth/request-magic-link",
+        json={"email": CRED["email"], "path": "https://evil.example.com/steal"},
+        headers=h,
+    )
+    row = next(
+        r for r in _outbox_for(client, CRED["email"])
+        if "sign in" in r["subject"].lower()
+    )
+    assert "/magic-link?token=" in row["text"]
+    assert "evil.example.com" not in row["text"]

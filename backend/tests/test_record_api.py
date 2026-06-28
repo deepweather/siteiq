@@ -46,7 +46,7 @@ def test_costs_are_positive_and_traceable(auth_client):
     assert costs["total_cost"] > 0
     assert costs["labor_cost"] > 0
     # Every line traces back to at least one supporting event.
-    assert all(len(l["supporting_event_ids"]) >= 1 for l in costs["lines"])
+    assert all(len(line["supporting_event_ids"]) >= 1 for line in costs["lines"])
 
 
 def test_verify_detects_intact_chain(auth_client):
@@ -213,7 +213,7 @@ def test_viewer_costs_have_no_per_worker_lines_but_keep_totals(auth_client):
     _generate(auth_client)
     with _as_role(auth_client, "viewer"):
         costs = auth_client.get("/api/record/costs").json()
-    assert all(l["category"] not in ("labor", "labor_waste") for l in costs["lines"])
+    assert all(line["category"] not in ("labor", "labor_waste") for line in costs["lines"])
     # Aggregate labour total is still reported.
     assert costs["labor_cost"] > 0
 
@@ -251,4 +251,4 @@ def test_manager_sees_full_worker_detail(auth_client):
     proj = auth_client.get("/api/record/entities/worker/worker-001").json()
     assert "walking_hours" in proj["metrics"]
     costs = auth_client.get("/api/record/costs").json()
-    assert any(l["category"] == "labor" for l in costs["lines"])
+    assert any(line["category"] == "labor" for line in costs["lines"])

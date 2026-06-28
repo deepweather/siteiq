@@ -1,4 +1,4 @@
-import type { SiteEventDTO } from '../../services/recordApi';
+import { evidenceUrl, type SiteEventDTO } from '../../services/recordApi';
 import { isNavigableSubject, useEntityNav } from './entityNav';
 import {
   fmtTime,
@@ -21,11 +21,21 @@ interface Props {
 export function EventRow({ event: e, showDate, children }: Props) {
   const openEntity = useEntityNav();
   const navigable = isNavigableSubject(e.subject_type);
+  const evidence = evidenceUrl(e.evidence_ref);
   return (
     <div className="px-4 py-3 flex items-start gap-3" data-testid="event-row">
-      <div className="text-lg leading-none mt-0.5" aria-hidden="true">
-        {kindIcon(e.kind)}
-      </div>
+      {evidence ? (
+        <img
+          src={evidence}
+          alt="evidence"
+          loading="lazy"
+          className="w-12 h-12 rounded object-cover border border-border shrink-0"
+        />
+      ) : (
+        <div className="text-lg leading-none mt-0.5" aria-hidden="true">
+          {kindIcon(e.kind)}
+        </div>
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm">{kindLabel(e.kind)}</span>

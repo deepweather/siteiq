@@ -16,7 +16,8 @@ ARG VITE_API_BASE=http://localhost:8000
 ARG VITE_WS_BASE=ws://localhost:8000
 ENV VITE_API_BASE=$VITE_API_BASE \
     VITE_WS_BASE=$VITE_WS_BASE
-RUN npm run build
+# Main dashboard SPA + the separate same-origin worker PWA (-> dist/worker).
+RUN npm run build && npm run build:worker
 
 
 FROM nginx:1.27-alpine AS runtime
@@ -35,6 +36,17 @@ server {
     location /assets/ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+    }
+
+    # Worker PWA — separate same-origin bundle. SPA fallback to its own
+    # entry so deep links like /worker/assets survive a hard refresh.
+    location /worker/assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+    location /worker/ {
+        try_files $uri $uri/ /worker/worker.html;
+        add_header Cache-Control "no-store" always;
     }
 
     location / {

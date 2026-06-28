@@ -1,3 +1,5 @@
+import datetime as _dt
+
 SITE_WIDTH = 240
 SITE_HEIGHT = 160
 
@@ -73,7 +75,6 @@ EVENT_DRAIN_INTERVAL = 5.0
 # RECORD_EPOCH_DATE + (N-1) days + T seconds. Keeps backfilled history and
 # live emission on one continuous, deterministic timeline. Real camera
 # sources will use wall-clock time instead.
-import datetime as _dt
 RECORD_EPOCH_DATE = _dt.date(2026, 1, 6)
 
 WORKDAY_START = 6 * 3600

@@ -1,0 +1,22 @@
+[Unit]
+Description=SiteIQ Edge Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Provision once with: siteiq-agent claim --server <url> --code <code>
+ExecStart=/usr/local/bin/siteiq-agent run --server %E{SITEIQ_SERVER}
+Restart=always
+RestartSec=5
+# Outbound-only; no inbound ports beyond the loopback local-ingest listener.
+Environment=SITEIQ_AGENT_CONFIG=/var/lib/siteiq-agent/config.json
+Environment=SITEIQ_AGENT_OUTBOX=/var/lib/siteiq-agent/outbox.db
+StateDirectory=siteiq-agent
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

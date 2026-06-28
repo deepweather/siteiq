@@ -1,0 +1,27 @@
+# Maps MQTT node ids (topic siteiq/sensors/<node_id>) to ledger subjects +
+# event kinds. Copy to node-map.yaml and edit for the site. The gateway is
+# the unit of trust; these dumb nodes never hold a device token themselves.
+
+defaults:
+  source: sensor
+  confidence: 0.8
+
+nodes:
+  # A magnetic contact on the main gate.
+  gate-north:
+    subject_type: zone
+    subject_id: zone-entry
+    kind: access.changed
+
+  # An RFID/badge reader — the worker id comes from the payload's `badge`.
+  badge-reader-1:
+    subject_type: worker
+    subject_id_field: badge
+    kind: worker.clocked_in
+    confidence: 0.95
+
+  # Vibration/usage sensor strapped to a generator.
+  genset-vibe-1:
+    subject_type: equipment
+    subject_id: genset-1
+    kind: equipment.utilization

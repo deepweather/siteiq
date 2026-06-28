@@ -149,28 +149,28 @@ def _aggregate(
     since: datetime | None,
     until: datetime | None,
 ) -> CostBreakdown:
-    labor = sum(l.amount for l in lines if l.category == CATEGORY_LABOR)
-    labor_waste = sum(l.amount for l in lines if l.category == CATEGORY_LABOR_WASTE)
-    equip = sum(l.amount for l in lines if l.category == CATEGORY_EQUIPMENT_IDLE)
-    material = sum(l.amount for l in lines if l.category == CATEGORY_MATERIAL)
+    labor = sum(line.amount for line in lines if line.category == CATEGORY_LABOR)
+    labor_waste = sum(line.amount for line in lines if line.category == CATEGORY_LABOR_WASTE)
+    equip = sum(line.amount for line in lines if line.category == CATEGORY_EQUIPMENT_IDLE)
+    material = sum(line.amount for line in lines if line.category == CATEGORY_MATERIAL)
     # labor_waste is a subset of labor, so it is excluded from the total.
     total = labor + equip + material
 
     by_cat: list[CostGroup] = []
     for cat in (CATEGORY_LABOR, CATEGORY_EQUIPMENT_IDLE, CATEGORY_MATERIAL):
-        amt = sum(l.amount for l in lines if l.category == cat)
+        amt = sum(line.amount for line in lines if line.category == cat)
         if amt:
             by_cat.append(CostGroup(key=cat, label=_CATEGORY_LABELS[cat], amount=_round(amt)))
 
     by_day_map: dict[str, float] = defaultdict(float)
     by_zone_map: dict[str, float] = defaultdict(float)
-    for l in lines:
-        if l.category == CATEGORY_LABOR_WASTE:
+    for line in lines:
+        if line.category == CATEGORY_LABOR_WASTE:
             continue  # don't double-count in day/zone totals
-        if l.occurred_on:
-            by_day_map[l.occurred_on] += l.amount
-        if l.zone_id:
-            by_zone_map[l.zone_id] += l.amount
+        if line.occurred_on:
+            by_day_map[line.occurred_on] += line.amount
+        if line.zone_id:
+            by_zone_map[line.zone_id] += line.amount
 
     by_day = [
         CostGroup(key=d, label=d, amount=_round(v))

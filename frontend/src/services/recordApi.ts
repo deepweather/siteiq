@@ -33,6 +33,15 @@ export interface SiteEventDTO {
   status: EventStatus | string;
   supersedes_event_id: string | null;
   actor_user_id: string | null;
+  device_id?: string | null;
+}
+
+/** Resolve an event's `evidence_ref` to a servable URL, or null. Device
+ *  evidence is stored as `blob:<id>` and served (cookie-authed) by the
+ *  fleet blob endpoint. */
+export function evidenceUrl(ref: string | null | undefined): string | null {
+  if (!ref || !ref.startsWith('blob:')) return null;
+  return `${API_BASE}/api/devices/blobs/${ref.slice('blob:'.length)}`;
 }
 
 export interface DayRollup {

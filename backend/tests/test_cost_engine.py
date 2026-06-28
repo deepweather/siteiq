@@ -49,7 +49,7 @@ def test_lines_carry_supporting_event_ids():
         _ev("material.delivered", {"subtype": "concrete", "quantity": 5, "unit": "m3"}, eid="ev-x"),
     ], rc)
     assert b.lines
-    assert all(l.supporting_event_ids for l in b.lines)
+    assert all(line.supporting_event_ids for line in b.lines)
     assert b.lines[0].supporting_event_ids == ["ev-x"]
 
 

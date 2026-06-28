@@ -31,8 +31,11 @@ from api.dev import router as dev_router
 from api.health import router as health_router
 from api.projects import router as projects_router
 from api.project_assets import router as project_assets_router
+from api.devices import router as devices_router
+from api.ingest import router as ingest_router
 from api.record import router as record_router
 from api.record_export import router as record_export_router
+from api.worker import router as worker_router
 from api.request_id import RequestIdMiddleware
 from api.routes import router as api_router
 from api.security_headers import SecurityHeadersMiddleware
@@ -42,6 +45,7 @@ from auth.csrf import CSRFMiddleware
 from auth.email_sender import build_sender_from_settings
 from auth.outbox_cleanup import run_cleanup_loop as run_outbox_cleanup
 from auth.rate_limit import configure_storage, limiter, rate_limit_handler
+from services.device_cleanup import run_cleanup_loop as run_device_blob_cleanup
 from auth.routes import router as auth_router
 from config import ANALYTICS_UPDATE_INTERVAL, EVENT_DRAIN_INTERVAL, SIM_TICK_INTERVAL
 from db.engine import create_db_engine
@@ -52,6 +56,7 @@ from orgs.routes import router as orgs_router
 from seeds.importer import import_seed_projects
 from services.capture import build_capture_parser_from_settings
 from services.event_ledger import EventLedger
+from services.ingest_writer import distinct_unprocessed_streams, drain_device_inbound
 from services.portfolio_estimator import compute_all_estimates
 from services.record_query import build_query_responder_from_settings
 from services.sim_calendar import sim_to_datetime
@@ -137,6 +142,26 @@ async def _run_event_drain_loop(app: FastAPI) -> None:
                 logger.exception(
                     "event_drain_failed", extra={"org_id": org_id}
                 )
+
+        # Device ingestion: this same task is the SINGLE chain-writer for
+        # device-submitted events, so folding staged `device_inbound` rows
+        # here (rather than in request handlers) keeps each stream's `seq`
+        # gap-free without locking the device-facing path.
+        settings: Settings = app.state.settings
+        try:
+            async with factory() as session:
+                streams = await distinct_unprocessed_streams(session)
+                for org_id, project_id in streams:
+                    await drain_device_inbound(
+                        session,
+                        org_id=org_id,
+                        project_id=project_id,
+                        confidence_floor=settings.device_confidence_floor,
+                    )
+                await session.commit()
+        except Exception:
+            logger.exception("device_ingest_drain_failed")
+
         await asyncio.sleep(EVENT_DRAIN_INTERVAL)
 
 
@@ -213,6 +238,13 @@ async def lifespan(app: FastAPI):
             interval_seconds=settings.auth_cleanup_interval_seconds,
         )
     )
+    device_blob_task = asyncio.create_task(
+        run_device_blob_cleanup(
+            session_factory,
+            retention_days=settings.device_blob_retention_days,
+            interval_seconds=settings.device_blob_cleanup_interval_seconds,
+        )
+    )
 
     try:
         yield
@@ -221,7 +253,7 @@ async def lifespan(app: FastAPI):
             eng.running = False
         bg_tasks = (
             sim_task, analytics_task, event_drain_task,
-            outbox_task, auth_cleanup_task,
+            outbox_task, auth_cleanup_task, device_blob_task,
         )
         for task in bg_tasks:
             task.cancel()
@@ -322,6 +354,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(project_assets_router)
     app.include_router(record_router)
     app.include_router(record_export_router)
+    app.include_router(worker_router)
+    app.include_router(ingest_router)
+    app.include_router(devices_router)
     app.include_router(api_router)
     app.include_router(ws_router)
     app.include_router(camera_router)

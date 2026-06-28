@@ -32,6 +32,7 @@ def event_to_dict(ev) -> dict:
         "status": ev.status,
         "supersedes_event_id": ev.supersedes_event_id,
         "actor_user_id": ev.actor_user_id,
+        "device_id": getattr(ev, "device_id", None),
     }
 
 

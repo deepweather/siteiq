@@ -68,11 +68,13 @@ def _csv_response(filename: str, header: list[str], rows):
         w = csv.writer(buf)
         w.writerow(header)
         yield buf.getvalue()
-        buf.seek(0); buf.truncate()
+        buf.seek(0)
+        buf.truncate()
         for row in rows:
             w.writerow(row)
             yield buf.getvalue()
-            buf.seek(0); buf.truncate()
+            buf.seek(0)
+            buf.truncate()
 
     return StreamingResponse(
         _gen(),
@@ -106,11 +108,11 @@ async def export_costs_csv(
     breakdown = access.redact_cost(compute_costs(rows, rate_card, since=s, until=u))
     out = [
         [
-            l.category, l.label, f"{l.amount:.2f}", l.occurred_on or "",
-            l.zone_id or "", l.subject_type or "", l.subject_id or "",
-            len(l.supporting_event_ids),
+            line.category, line.label, f"{line.amount:.2f}", line.occurred_on or "",
+            line.zone_id or "", line.subject_type or "", line.subject_id or "",
+            len(line.supporting_event_ids),
         ]
-        for l in breakdown.lines
+        for line in breakdown.lines
     ]
     return _csv_response(
         f"siteiq-costs-{src.project_id}.csv",

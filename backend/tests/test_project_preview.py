@@ -19,7 +19,7 @@ def _doc(slug: str = "prev-1", *, level_pairs: list[tuple[str, str, float, int]]
     test pass `[(id, name, elevation_m, order), ...]`."""
     if level_pairs is None:
         level_pairs = [(DEFAULT_LEVEL_ID, "EG", 0.0, 0)]
-    levels = [Level(id=l[0], name=l[1], elevation_m=l[2], order=l[3]) for l in level_pairs]
+    levels = [Level(id=lv[0], name=lv[1], elevation_m=lv[2], order=lv[3]) for lv in level_pairs]
     doc = ProjectDocument(
         slug=slug,
         name=f"Preview {slug}",

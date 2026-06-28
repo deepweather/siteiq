@@ -171,7 +171,7 @@ class DeterministicQueryResponder:
             ),
             data=breakdown.model_dump(exclude={"lines"}),
             supporting_event_ids=[
-                eid for l in breakdown.lines[:50] for eid in l.supporting_event_ids
+                eid for line in breakdown.lines[:50] for eid in line.supporting_event_ids
             ],
         )
 

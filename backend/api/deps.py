@@ -19,8 +19,9 @@ from auth.sessions import (
     get_session as load_session,
     touch_session,
 )
-from db.models import AuthSession, Org, OrgMembership, Role, User
+from db.models import AuthSession, Device, Org, OrgMembership, Role, User
 from db.session import get_db
+from services.device_service import authenticate_device, touch_device
 from services.recommendation_service import RecommendationService
 from state.source import SiteStateSource
 from vision.detector import VideoDetector
@@ -166,6 +167,32 @@ async def get_current_membership(
     return m
 
 
+# ---------------------------------------------------------------------------
+# Device (bearer-token) authentication — for `/api/ingest/*`
+# ---------------------------------------------------------------------------
+
+
+async def get_current_device(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Device:
+    """Resolve the calling device from `Authorization: Bearer <token>`.
+
+    Devices are NOT browser sessions: bearer auth (no cookie), so these
+    routes are CSRF-exempt by construction. The returned device carries its
+    fixed `(org_id, project_id)` scope — ingestion ignores any client-
+    supplied org/project."""
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise ApiError(401, "device_not_authenticated", "Device token required.")
+    device = await authenticate_device(db, token.strip())
+    if device is None:
+        raise ApiError(401, "device_not_authenticated", "Invalid or revoked device token.")
+    await touch_device(db, device)
+    return device
+
+
 def require_role(min_role: Role):
     """Returns a Depends-able function that raises 403 if the current
     membership is below `min_role`."""
@@ -206,6 +233,14 @@ async def get_source(
     """
     registry = _get_registry(request)
 
+    # Live mode: build/refresh a LiveSource folded from the device-fed ledger
+    # over the project's static layout (closes debt #33). Falls back to the
+    # simulation path if no document can be resolved.
+    if getattr(org, "live_mode", False):
+        live = await _build_live_source(request, org, db, registry)
+        if live is not None:
+            return live
+
     version_id = org.active_project_version_id
     if version_id is not None:
         from db.project_repository import ProjectRepository
@@ -222,6 +257,39 @@ async def get_source(
         # Stale pointer (e.g. version was deleted): fall through to seed.
 
     return registry.for_org(org.id, project_id=org.active_project_id)
+
+
+async def _build_live_source(request, org, db, registry):
+    """Resolve the active ProjectDocument (pinned version or seed slug),
+    build/return the org's LiveSource, and fold confirmed ledger events over
+    it. Returns None if no document can be resolved (caller uses sim)."""
+    from models.project_document import ProjectDocument
+    from seeds.loader import load_seed_document
+    from services.event_ledger import EventLedger, EventStatusValue
+
+    doc = None
+    version_id = org.active_project_version_id
+    if version_id is not None:
+        from db.project_repository import ProjectRepository
+
+        repo = ProjectRepository(db)
+        version_row = await repo.get_version(version_id)
+        if version_row is not None:
+            doc = ProjectDocument.model_validate(version_row.document)
+    if doc is None:
+        slug = org.active_project_id or request.app.state.settings.default_project_id
+        doc = load_seed_document(slug)
+        version_id = None
+    if doc is None:
+        return None
+
+    live = registry.for_org_live(org.id, document=doc, version_id=version_id)
+    rows = await EventLedger(db).query(
+        org.id, live.project_id,
+        statuses=[EventStatusValue.CONFIRMED], order="asc", limit=5000,
+    )
+    live.apply_events(rows)
+    return live
 
 
 async def get_rec_service(

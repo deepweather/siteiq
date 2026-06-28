@@ -253,17 +253,31 @@ async def verify_email(db: AsyncSession, *, token: str) -> User:
 # ---------------------------------------------------------------------------
 
 
+# Landing paths a magic-link email is allowed to point at. Constrained to
+# prevent the optional `path` from becoming an open-redirect vector.
+MAGIC_LINK_PATHS = {"/magic-link", "/worker/login"}
+
+
 async def request_magic_link(
-    db: AsyncSession, *, email: str, sender: EmailSender, frontend_origin: str
+    db: AsyncSession,
+    *,
+    email: str,
+    sender: EmailSender,
+    frontend_origin: str,
+    path: str = "/magic-link",
 ) -> None:
     """Sends a one-time sign-in link to the given email if the account
     exists. Always returns silently — same external behavior whether
     or not the email is registered, so we never leak account
     existence.
 
-    The token is single-use and expires in MAGIC_LINK_TTL_MINUTES.
-    Consuming it logs the user in without their password.
+    `path` selects the landing route (e.g. `/worker/login` for the worker
+    PWA) and is validated against an allow-list. The token is single-use
+    and expires in MAGIC_LINK_TTL_MINUTES; consuming it logs the user in
+    without their password.
     """
+    if path not in MAGIC_LINK_PATHS:
+        path = "/magic-link"
     email_lower = _normalize_email(email)
     result = await db.execute(select(User).where(User.email_lower == email_lower))
     user = result.scalar_one_or_none()
@@ -281,7 +295,7 @@ async def request_magic_link(
         )
     )
     await db.flush()
-    subject, html, text = email_templates.magic_link(user.name, frontend_origin, token)
+    subject, html, text = email_templates.magic_link(user.name, frontend_origin, token, path)
     await sender.send(db, to=user.email_display, subject=subject, html=html, text=text)
     await _audit(db, kind="user.magic_link_requested", org_id=None, actor_user_id=user.id)
 

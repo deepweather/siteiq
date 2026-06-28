@@ -16,7 +16,14 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth/AuthProvider';
 import { useLive } from './useLive';
-import { auth, clearCsrfCache, fetchProjects, type ProjectSummary } from '../services/api';
+import {
+  auth,
+  clearCsrfCache,
+  fetchProjects,
+  getSimMode,
+  setSimMode,
+  type ProjectSummary,
+} from '../services/api';
 import { formatSimTime } from '../utils/formatting';
 import { openPalette } from './keyboard';
 
@@ -27,12 +34,25 @@ export function MenuBar() {
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const [projectMenuAnchor, setProjectMenuAnchor] = useState<DOMRect | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [liveMode, setLiveMode] = useState(false);
   const projectRef = useRef<HTMLButtonElement>(null);
   const menuRootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchProjects().then(setProjects).catch(() => {});
+    getSimMode().then((m) => setLiveMode(m.live)).catch(() => {});
   }, []);
+
+  const toggleLiveMode = async () => {
+    const next = !liveMode;
+    setLiveMode(next);
+    try {
+      await setSimMode(next);
+      live.reload();
+    } catch {
+      setLiveMode(!next);
+    }
+  };
 
   // Close menu dropdowns on outside click / Esc.
   useEffect(() => {
@@ -187,6 +207,20 @@ export function MenuBar() {
           </button>
         ))}
       </div>
+
+      <button
+        type="button"
+        onClick={() => void toggleLiveMode()}
+        className={`px-2 h-6 rounded text-[11px] font-medium shrink-0 border ${
+          liveMode
+            ? 'bg-success text-white border-success'
+            : 'border-border text-muted-foreground hover:bg-secondary'
+        }`}
+        title={liveMode ? 'Live device feed — click for simulation' : 'Simulation — click for live device feed'}
+        aria-pressed={liveMode}
+      >
+        {liveMode ? 'LIVE' : 'SIM'}
+      </button>
 
       <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-secondary shrink-0">
         <span className={`w-1.5 h-1.5 rounded-full ${live.connected ? 'bg-success' : 'bg-destructive'}`} />

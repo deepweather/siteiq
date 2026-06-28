@@ -76,6 +76,9 @@ class ForgotPasswordRequest(BaseModel):
 
 class MagicLinkRequest(BaseModel):
     email: EmailStr
+    # Optional landing route for the email link. Validated against an
+    # allow-list in the service (e.g. "/worker/login" for the worker PWA).
+    path: Optional[str] = None
 
 
 class LoginWithTokenRequest(BaseModel):
@@ -313,7 +316,11 @@ async def request_magic_link(
     reveal whether the email is registered."""
     settings = request.app.state.settings
     await svc.request_magic_link(
-        db, email=body.email, sender=sender, frontend_origin=settings.frontend_origin
+        db,
+        email=body.email,
+        sender=sender,
+        frontend_origin=settings.frontend_origin,
+        path=body.path or "/magic-link",
     )
     return {"status": "ok"}
 

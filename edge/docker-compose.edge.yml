@@ -1,0 +1,32 @@
+# A Tier-A on-site box: the agent (token + outbox + upload) plus the CV
+# sidecar (YOLO -> events). Provision once on the host:
+#
+#   docker compose -f docker-compose.edge.yml run --rm agent \
+#     claim --server https://siteiq.example.com --code <CODE>
+#
+# then `docker compose -f docker-compose.edge.yml up`.
+#
+# For a sensor-only gateway, drop the `sidecar` service and add the MQTT
+# broker + bridge instead.
+
+services:
+  agent:
+    build: ./agent
+    restart: unless-stopped
+    command: ["run", "--server", "${SITEIQ_SERVER:-http://host.docker.internal:8000}", "--local-addr", "0.0.0.0:9099"]
+    volumes:
+      - agent_data:/data
+    ports:
+      - "127.0.0.1:9099:9099"  # local ingest, loopback only
+
+  sidecar:
+    build: ./sidecar
+    restart: unless-stopped
+    depends_on:
+      - agent
+    command: ["--source", "${SITEIQ_CAMERA:-demo}", "--agent", "http://agent:9099"]
+    # For a real camera, pass --source rtsp://... and mount calibration.
+    # devices: ["/dev/video0:/dev/video0"]   # for a USB camera
+
+volumes:
+  agent_data:

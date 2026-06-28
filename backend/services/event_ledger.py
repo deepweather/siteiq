@@ -99,6 +99,8 @@ class EventLedger:
             status=env.status,
             supersedes_event_id=env.supersedes_event_id,
             actor_user_id=env.actor_user_id,
+            client_event_id=env.client_event_id,
+            device_id=env.device_id,
             prev_hash=prev_hash,
             hash=digest,
         )
@@ -187,6 +189,27 @@ class EventLedger:
         if row is None or row.org_id != org_id:
             return None
         return row
+
+    async def find_by_client_event_id(
+        self, org_id: str, project_id: str, client_event_id: str | None
+    ) -> SiteEvent | None:
+        """Look up an already-appended event by its client idempotency key.
+
+        Returns None when the key is empty or no matching row exists. The
+        worker route uses this to make `POST /api/worker/entry` safely
+        replayable by an offline outbox."""
+        if not client_event_id:
+            return None
+        result = await self.db.execute(
+            select(SiteEvent)
+            .where(
+                SiteEvent.org_id == org_id,
+                SiteEvent.project_id == project_id,
+                SiteEvent.client_event_id == client_event_id,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def query(
         self,

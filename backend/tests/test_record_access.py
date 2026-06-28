@@ -89,7 +89,7 @@ def test_redact_cost_drops_per_worker_lines_for_non_manager():
         ],
     )
     out = RecordAccess("member").redact_cost(bd)
-    cats = {l.category for l in out.lines}
+    cats = {line.category for line in out.lines}
     assert "labor" not in cats
     assert "equipment_idle" in cats
     # Aggregate totals are untouched.

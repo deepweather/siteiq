@@ -331,6 +331,27 @@ async def toggle_pause(
     return {"paused": source.paused}
 
 
+class ModeRequest(BaseModel):
+    live: bool
+
+
+@router.post("/api/simulation/mode")
+async def set_mode(
+    req: ModeRequest,
+    org: Org = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle the org between the simulation and the live device feed. The
+    next `get_source` call builds (or tears down) the LiveSource."""
+    org.live_mode = req.live
+    return {"live": org.live_mode}
+
+
+@router.get("/api/simulation/mode")
+async def get_mode(org: Org = Depends(get_current_org)):
+    return {"live": bool(getattr(org, "live_mode", False))}
+
+
 @router.get("/api/simulation/state")
 async def get_sim_state(
     source: SiteStateSource = Depends(get_source),

@@ -84,6 +84,21 @@ class Settings(BaseSettings):
     query_provider: str = "deterministic"   # "deterministic" | "llm"
     record_llm_api_key: str = ""
 
+    # Devices / ingestion. Physical producers (cameras, gateways, sensors)
+    # post into the ledger through `/api/ingest/*` using a bearer device
+    # token. See `api/ingest.py` + `services/device_service.py`.
+    ingest_enabled: bool = True
+    # Device-submitted events at or above this confidence are auto-confirmed;
+    # below it they land as `proposed` in the Record Inbox for human review.
+    device_confidence_floor: float = 0.75
+    # One-time claim code lifetime (mirrors org-invite TTL).
+    device_claim_ttl_hours: int = 24
+    # Evidence blobs (frames/clips) older than this are pruned. 0 disables.
+    device_blob_retention_days: int = 14
+    device_blob_cleanup_interval_seconds: int = 3600
+    # Max evidence blob upload size (bytes).
+    device_blob_max_bytes: int = 5 * 1024 * 1024
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "text"  # "text" or "json"

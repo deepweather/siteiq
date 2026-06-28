@@ -81,6 +81,12 @@ class EventEnvelope(BaseModel):
     status: str = "confirmed"
     supersedes_event_id: str | None = None
     actor_user_id: str | None = None
+    # Client-generated idempotency key (worker PWA offline outbox). NOT part
+    # of `event_hash` — it is a dedupe key, not site content.
+    client_event_id: str | None = None
+    # Producing device (camera/gateway/sensor) provenance. NOT part of
+    # `event_hash` — metadata, not content.
+    device_id: str | None = None
 
 
 def _canonical_payload(payload: dict) -> str:

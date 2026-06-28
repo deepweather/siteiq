@@ -37,6 +37,8 @@ Two intentionally-disconnected systems behind a self-hosted auth layer:
                               │     ↳ Dashboard / Portfolio / Projects /    │
                               │       Settings                              │
                               │   Editor (full-viewport, outside Chrome)    │
+                              │  Worker PWA /worker/* (separate bundle,     │
+                              │   magic-link, offline outbox)               │
                               └────────────────┬────────────────────────────┘
                                                │ cookie + CSRF
                                                ▼
@@ -103,6 +105,7 @@ this — a future `LiveSource` drops in by changing only the registry's
 | Auth | argon2-cffi (passwords), opaque server-side sessions, slowapi (rate limit), httpx (Resend) |
 | Frontend | React 19, Vite 8, TypeScript 6, Tailwind CSS 3, HTML5 Canvas |
 | Frontend libs | react-router-dom v7, react-hook-form, zod, @zxcvbn-ts (lazy), sonner |
+| Worker PWA | vite-plugin-pwa (Workbox service worker), idb (IndexedDB outbox) |
 | CV | ultralytics (YOLOv8n), opencv-python-headless |
 | Package mgmt | uv (backend), npm (frontend) |
 | Real-time | WebSocket at 10 Hz for sim state, ~5 Hz for camera frames |
@@ -213,7 +216,8 @@ Passwordless alternative path. `POST /auth/request-magic-link`
 (rate-limited, silent on unknown emails) drops a 15-minute single-use
 token in the user's email. `POST /auth/login-with-token` consumes the
 token. Replays return `token_used`. UI at `/magic-link`, reachable from
-`LoginPage`.
+`LoginPage`. An allow-listed optional `path` (`/magic-link` | `/worker/login`)
+lets the email link land directly in the worker PWA instead of the dashboard.
 
 ### Rate limiting
 slowapi limiter as a module-level singleton in `auth/rate_limit.py`
@@ -562,6 +566,10 @@ class ProjectDocument(BaseModel):
   supersede as companion events AND updates the cached `status`; `query`
   filters (subject/kind/source/status/time, excludes companion events by
   default); `verify_chain` recomputes the chain to detect tampering.
+  `find_by_client_event_id` powers the worker PWA's offline-safe idempotent
+  appends — the `client_event_id` is excluded from the hash (a dedupe key,
+  not site content, same rationale as `status`), with a backstop unique
+  index `(org_id, project_id, client_event_id)` (migration `0006`).
 - **`cost_engine.py`** — `compute_costs(events, rate_card)` folds confirmed
   `worker.timesheet` / `equipment.utilization` / `material.delivered`
   events into a `CostBreakdown`. Every `CostLine` carries its supporting
@@ -620,6 +628,16 @@ flushes every live engine into the ledger every `EVENT_DRAIN_INTERVAL`
   attestation), `equipment.csv`, `timesheets.csv`. Exporting requires
   member+; content is redacted by the same `RecordAccess` tier; timesheets
   (payroll) are admin/owner-only. Streamed RFC 4180 CSV.
+- **`worker.py`** — the field-crew PWA surface (`/api/worker/*`). Big-button
+  reads for any member (`overview`, `zones`, `assets`, `assets/{type}/{id}`,
+  `my-entries`) and one write (`POST /entry`) that always lands `proposed` +
+  `source="human"` in the supervisor Inbox ("confirm, don't create"). Crew-
+  writable (viewer+), gated by `RecordAccess.can_submit_entry`; idempotent on
+  a client-generated `client_event_id` so the offline outbox replays exactly
+  once. `entry` kinds (delivery/incident/inspection/note) map to the same
+  `EventKind`s the `RuleBasedCaptureParser` emits. `zones` is sourced from the
+  active project's `site.zones` (NOT the ledger) so the entry wizard never
+  dead-ends on a fresh/empty stream.
 
 ### Record visibility policy — `services/record_access.py`
 Tiered data privacy over the ledger (auth is solved; this is authorization).
@@ -634,6 +652,9 @@ maps the role ladder to three tiers and redacts server-side:
   the `walking_hours` metric) and per-worker cost lines are stripped.
 - **manager** (admin/owner) — everything.
 Applied in `events`, `timeline`, `inbox`, `subjects`, `entities`, `costs`.
+Write side: `can_submit_entry(kind)` allow-lists the worker PWA's entry kinds
+(`delivery`/`incident`/`inspection`/`note`) — any member may submit, always
+as `proposed`; nothing personal/behavioural is writable through it.
 The frontend mirrors it for affordance (worker links simply don't appear for
 crew; the entity drawer shows a "restricted" card on a 403).
 - **`project_assets.py`** — background image upload + serve. Multipart
@@ -679,8 +700,8 @@ constructs the async DB engine + session factory, the `EmailSender`
 
 Middleware order: request-id (outermost) → CORS → CSRF (double-submit
 cookie + Origin allow-list, exempts `/auth/csrf` + `/ws/*`) →
-security-headers → routers (`/auth`, `/api/orgs`, `/api`, `/ws`,
-`/ws/camera`, plus `/dev/*` only in dev). A custom exception handler
+security-headers → routers (`/auth`, `/api/orgs`, `/api`, `/api/worker`,
+`/ws`, `/ws/camera`, plus `/dev/*` only in dev). A custom exception handler
 converts `HTTPException` and `RequestValidationError` into the standard
 `{error: {code, message, field?}}` envelope.
 
@@ -1023,6 +1044,37 @@ The record is live, so the views auto-refresh (10 s poll + on window focus)
 without flashing a loading state on background refreshes. `EventRow` +
 `format.ts` are shared.
 
+### Worker PWA — separate bundle (`src/worker/`)
+A second, install-to-homescreen app for field crews, **built separately** and
+served same-origin under `/worker/` (so the session cookie + CSRF + Origin
+allow-list all work unchanged — `SameSite=Lax` keys on the registrable
+domain, not the path). It is NOT part of `App.tsx`; it has its own Vite
+config, HTML entry, and service worker.
+
+- **Build**: `vite.worker.config.ts` (`base: '/worker/'`, `outDir:
+  dist/worker`, `vite-plugin-pwa` scoped to `/worker/`), entry `worker.html`,
+  scripts `dev:worker` / `build:worker`. The Dockerfile runs both builds and
+  nginx adds a `/worker/` SPA fallback to `worker.html`. The crew bundle is
+  intentionally lightweight (~86 KB gzip) and never caches the dashboard.
+- **Reuse**: mounts the shared `lib/auth/AuthProvider` + `services/api.ts`
+  verbatim (cookie + CSRF). Login is magic-link only (lands at
+  `/worker/login?token=`).
+- **i18n**: German-first with an EN toggle. `i18n.ts` (dict + `useI18n` hook,
+  no JSX) + `I18nProvider.tsx` (component only) — same split rationale as
+  `shell/LiveContext`.
+- **Navigation**: a persistent bottom tab bar (Home / Assets / Entries) +
+  a top status strip (connectivity + pending-sync count + DE/EN + sign out).
+  The full-screen entry wizard hides the tabs.
+- **Entry wizard** (`pages/EntryWizard.tsx`): one question per screen for
+  delivery/incident/inspection/note (big choices, a numeric stepper, zone
+  chips, voice dictation via `VoiceTextarea`, a review step, then a result
+  screen). Zones come from `GET /api/worker/zones` (site definition).
+- **Offline-first** (`offlineQueue.ts` + `hooks.ts` + `pwa.ts`): every entry
+  is written to an IndexedDB outbox first, then flushed; the client
+  `client_event_id` makes replay exactly-once. Auto-flushes on reconnect; the
+  status strip shows "Offline / N wartet / Synchronisiere…". `workerApi.ts`
+  is the typed client.
+
 ### `pages/settings/*`
 Account (change password, resend verification, delete account), Team
 (members, invites, audit log for owners — payload values folded to
@@ -1043,8 +1095,8 @@ values use `tabular-nums` for stable width.
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend | **373** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, navmesh + path-following + optimizer walkable-clamp, microbench gates, **system of record (ledger hash/verify/bitemporal, cost engine, demo generator + backfill-on-switch, capture, query, `/api/record` flow, tiered visibility policy, exports)** |
-| Frontend | **126** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, **record (recordApi, Directory, EntityDetail, Inbox, Costs, Ask, Timeline, ExportMenu)** |
+| Backend | **384** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, navmesh + path-following + optimizer walkable-clamp, microbench gates, system of record (ledger hash/verify/bitemporal, cost engine, demo generator + backfill-on-switch, capture, query, `/api/record` flow, tiered visibility policy, exports), **worker PWA API (proposed entry → inbox → confirm, crew-write policy, zones-from-site, idempotent replay, magic-link path allow-list)** |
+| Frontend | **136** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, record (recordApi, Directory, EntityDetail, Inbox, Costs, Ask, Timeline, ExportMenu), **worker PWA (workerApi, offlineQueue enqueue/flush/dedupe, EntryWizard online+offline)** |
 
 Mypy strict scoped to `simulation/worker_internals.py`,
 `simulation/worker_behavior.py`, `simulation/navmesh.py`,
@@ -1103,7 +1155,7 @@ Mutating requests carry `credentials: 'include'` + `X-CSRF-Token`.
 | `/auth/sessions` | GET | `Sessions` | Live (non-revoked, non-expired) sessions |
 | `/auth/sessions/{id}/revoke` | POST | `Sessions` | Per-device revoke |
 | `/auth/sessions/revoke-all` | POST | `Sessions` | Sign out everywhere; reissues current cookie |
-| `/auth/request-magic-link` | POST | `MagicLinkPage` | Silent on unknown emails |
+| `/auth/request-magic-link` | POST | `MagicLinkPage`, worker `WorkerLogin` | Silent on unknown emails; allow-listed `path` lands the link in `/magic-link` or `/worker/login` |
 | `/auth/login-with-token` | POST | `MagicLinkPage` | 15-min single-use |
 | `/auth/delete-account` | POST | `AccountSettings` | Password re-supplied; cascade |
 
@@ -1187,6 +1239,17 @@ Exports (`api/record_export.py`) require member+ (viewers can browse on-screen
 but can't pull files out) and are redacted by the same `RecordAccess` tier as
 the views — never a backdoor around the privacy policy. Streamed as RFC 4180
 CSV (mirrors `audit.csv`); the frontend links via `<a download>`.
+
+### Worker PWA (gated by current org, served at `/worker/`)
+
+| Backend route | Method | Frontend caller | Notes |
+|--------------|--------|----------------|-------|
+| `/api/worker/overview` | GET | worker `WorkerHome` | Site name + today's delivery/incident/inspection counts + my pending count |
+| `/api/worker/zones` | GET | worker `EntryWizard` | Zones from the active project's `site.zones` (not the ledger) |
+| `/api/worker/assets` | GET | worker `AssetList` | `?type=`/`?q=` — material/equipment/zone subjects + folded metrics (material on-hand, equipment utilization) |
+| `/api/worker/assets/{type}/{id}` | GET | worker `AssetDetail` | Entity projection; worker subjects 403 for crew |
+| `/api/worker/my-entries` | GET | worker `MyEntries` | Caller's recent submissions + their review status |
+| `/api/worker/entry` | POST | worker `EntryWizard` (via `offlineQueue`) | member/viewer+; forced `proposed` + `source="human"`; idempotent on `client_event_id` |
 
 ### Dev only (`SITEIQ_ENV=dev`)
 

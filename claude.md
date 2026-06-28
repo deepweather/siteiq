@@ -567,13 +567,17 @@ class ProjectDocument(BaseModel):
   events into a `CostBreakdown`. Every `CostLine` carries its supporting
   event ids. Default `RateCard` in `models/cost.py` (config-sourced).
 - **`record_projections.py`** — pure folds: `entity_projection` (current
-  state + per-type metrics + history for one subject), `daily_rollup`,
-  `event_to_dict`.
+  state + per-type metrics + history for one subject), `list_subjects`
+  (one row per distinct subject for the Directory: descriptor, counts,
+  last seen), `daily_rollup`, `event_to_dict`.
 - **`demo_record_generator.py`** — deterministic backfill from the active
   `ProjectDocument` for the days BEFORE `start_day` (timesheets, equipment
   utilization + state changes, deliveries incl. a few low-confidence camera
   detections for the inbox, inspections, incidents). One continuous timeline
-  with live emission. CLI: `seed_demo_record.py`.
+  with live emission. CLI: `seed_demo_record.py`. `ensure_demo_history`
+  backfills a stream only if it's empty — wired into `POST /api/site/load-seed`
+  and `POST /api/projects/{id}/activate` so any project an org switches to has
+  a record on first view (never clobbers existing data).
 - **`capture.py`** — `CaptureParser` Protocol + `RuleBasedCaptureParser`
   default (keyword/regex → `proposed` events) + `LLMCaptureParser` stub.
 - **`record_query.py`** — `QueryResponder` Protocol + `DeterministicQueryResponder`
@@ -611,6 +615,11 @@ flushes every live engine into the ledger every `EVENT_DRAIN_INTERVAL`
   admin+. The active stream is `(org.id, source.project_id)`. Every mutation
   writes an `audit_events` row. Reads are filtered through the tiered
   visibility policy (`Depends(get_record_access)`, see below).
+- **`record_export.py`** — record exports (`/api/record/exports/*`):
+  `costs.csv`, `events.csv`, `events.json` (hash chain + integrity
+  attestation), `equipment.csv`, `timesheets.csv`. Exporting requires
+  member+; content is redacted by the same `RecordAccess` tier; timesheets
+  (payroll) are admin/owner-only. Streamed RFC 4180 CSV.
 
 ### Record visibility policy — `services/record_access.py`
 Tiered data privacy over the ledger (auth is solved; this is authorization).
@@ -986,6 +995,9 @@ Per-site cards with Open Site button that calls
 ### `pages/record/*`
 The system-of-record UI under `/app/record` (`RecordPage` tabs, no extra
 routing). `recordApi.ts` is the typed client. Tabs:
+- **Directory** (`RecordDirectory`, default tab) — searchable, categorised
+  card grid of every subject (workers / equipment / materials / zones / …);
+  clicking a card opens the entity drawer.
 - **Timeline** (`RecordTimeline`) — flight recorder: day selector +
   events grouped by hour.
 - **Inbox** (`RecordInbox`) — proposed (low-confidence) events; one-tap
@@ -996,8 +1008,20 @@ routing). `recordApi.ts` is the typed client. Tabs:
 - **Ledger** (`RecordLedger`) — searchable raw log + a tamper-evidence
   "chain verified" badge from `GET /api/record/verify`.
 - **Ask** (`RecordAsk`) — conversational query over the ledger.
-A quick "+ Capture" bar (member+) and a "Generate demo data" button
-(admin) sit above the tabs. `EventRow` + `format.ts` are shared.
+
+**One interlinked surface, not isolated tabs.** Every subject reference —
+in `EventRow` (Timeline/Ledger/Inbox/history), Directory cards, and Costs
+lines — is a link that opens that subject's full record in a shared
+slide-over (`EntityDrawer` → `EntityDetail`), reachable from any tab and
+navigable within itself. Wiring is `entityNav.ts` (`EntityNavContext` +
+`useEntityNav`); the drawer's history rows are themselves clickable. A 403
+(crew opening a worker) renders a "restricted" card.
+
+A quick "+ Capture" bar (member+), an **`ExportMenu`** (member+; Timesheets
+manager-only), and a "Generate demo data" button (admin) sit above the tabs.
+The record is live, so the views auto-refresh (10 s poll + on window focus)
+without flashing a loading state on background refreshes. `EventRow` +
+`format.ts` are shared.
 
 ### `pages/settings/*`
 Account (change password, resend verification, delete account), Team
@@ -1019,8 +1043,8 @@ values use `tabular-nums` for stable width.
 
 | Suite | Count | Covers |
 |---|---|---|
-| Backend | **348** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, navmesh + path-following + optimizer walkable-clamp, microbench gates, **system of record (ledger hash/verify/bitemporal, cost engine, demo generator, capture, query, `/api/record` flow)** |
-| Frontend | **117** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, **record (recordApi, Inbox, Costs, Ask, Timeline)** |
+| Backend | **373** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, navmesh + path-following + optimizer walkable-clamp, microbench gates, **system of record (ledger hash/verify/bitemporal, cost engine, demo generator + backfill-on-switch, capture, query, `/api/record` flow, tiered visibility policy, exports)** |
+| Frontend | **126** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, **record (recordApi, Directory, EntityDetail, Inbox, Costs, Ask, Timeline, ExportMenu)** |
 
 Mypy strict scoped to `simulation/worker_internals.py`,
 `simulation/worker_behavior.py`, `simulation/navmesh.py`,
@@ -1040,6 +1064,8 @@ Microbench gates locked in:
   detector + `cheap_hasher` for argon2, builds a `TestClient`.
 - `auth_client` — `client` with a real signed-up user + session cookie
   + CSRF header preset; the standard fixture for auth-gated routes.
+- `ledger_session` — a throwaway in-memory async DB session (all tables
+  created) for system-of-record unit tests that hit the ledger directly.
 - `authenticate(client)` / `setup_test_db(url)` — helpers for tests
   that build their own app variants.
 
@@ -1140,7 +1166,8 @@ Mutating requests carry `credentials: 'include'` + `X-CSRF-Token`.
 | `/api/record/events` | GET | `RecordLedger` via `recordApi.listEvents` | Filters: subject/kind/source/status/time |
 | `/api/record/days` | GET | `RecordTimeline` | Per-day rollup for the day selector |
 | `/api/record/timeline` | GET | `RecordTimeline` | `?date=YYYY-MM-DD`; one day's events |
-| `/api/record/entities/{type}/{id}` | GET | (entity drill-in) | Projection + per-type metrics |
+| `/api/record/subjects` | GET | `RecordDirectory` | Distinct subjects + per-type counts (tier-filtered) |
+| `/api/record/entities/{type}/{id}` | GET | `EntityDrawer`/`EntityDetail` | Projection + per-type metrics; worker = supervisor+ (crew 403) |
 | `/api/record/inbox` | GET | `RecordInbox` | Proposed events awaiting confirmation |
 | `/api/record/events/{id}/confirm` | POST | `RecordInbox` | member+ |
 | `/api/record/events/{id}/reject` | POST | `RecordInbox` | member+ |

@@ -10,6 +10,41 @@ a substitute for git.
 
 ---
 
+## 2026-06 — System of record follow-ups (directory, privacy, exports)
+
+Built on the event ledger after the initial ship.
+
+- **Browsable entity directory + click-through everywhere.** Added
+  `GET /api/record/subjects` (`record_projections.list_subjects`) and a
+  searchable, categorised `RecordDirectory` card grid. Made the record one
+  interlinked surface: every subject reference (timeline/ledger/inbox rows,
+  directory cards, cost lines) opens that entity's full record in a shared
+  `EntityDrawer`/`EntityDetail`, reachable from any tab and navigable within
+  itself (`entityNav.ts` `EntityNavContext`). Before this, individual
+  workers/equipment were only reachable from one place.
+- **Tiered data-privacy policy (`services/record_access.py`).** Authorization
+  on top of the existing auth. Individual worker behavioural data is
+  privileged (GDPR / works-council); aggregate + asset data stays open.
+  `RecordAccess(role)` → crew (viewer, operational only), supervisor (member,
+  worker timesheets minus toilet/break/movement detail + no per-worker cost),
+  manager (admin/owner, everything). Enforced server-side across events,
+  timeline, inbox, subjects, entities, costs; UI mirrors it (worker links
+  hidden for crew; drawer shows a "restricted" card on 403).
+- **No more empty-at-start.** A project with no backfilled history started
+  empty and only filled slowly via live emission, so the directory read 0
+  until a manual reload. `ensure_demo_history` now backfills a stream on
+  `load-seed` / `activate` if it's empty (never clobbers data), and the
+  record views auto-refresh (10 s poll + on window focus) without flashing a
+  loading state on background refreshes.
+- **Exports (`api/record_export.py`).** `costs.csv`, `events.csv`,
+  `events.json` (hash chain + integrity attestation), `equipment.csv`,
+  `timesheets.csv`. Exporting requires member+ (viewers can browse on-screen
+  but can't pull files out); content is redacted by the same `RecordAccess`
+  tier (never a backdoor); timesheets/payroll are admin/owner-only. RFC 4180
+  CSV mirroring `audit.csv`; frontend `ExportMenu` links via `<a download>`.
+
+---
+
 ## 2026-06 — System of record (operational event ledger)
 
 Added SiteIQ's operational system of record: an append-only, hash-chained,

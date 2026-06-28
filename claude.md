@@ -951,9 +951,10 @@ Every `/app/*` route is nested under a two-layer shell:
 ### Routes (`App.tsx`)
 
 ```
-/                         landing
-/login /signup /forgot-password /reset-password /verify-email
-/accept-invite /magic-link   public auth flow
+/                         landing      ┐ wrapped in <RedirectIfAuthed> —
+/login /signup            public auth  ┘ signed-in users bounce to /app
+/forgot-password /reset-password /verify-email
+/accept-invite /magic-link   token-action flows (reachable while signed in)
 
 /app                      → <AppLayout> wraps everything below
   projects/:id/edit       → <ProjectEditorPage>  (no Chrome — full viewport)
@@ -977,8 +978,14 @@ Every `/app/*` route is nested under a two-layer shell:
   savings delta. `resetBaseline()` clears on project switch.
 - **`lib/auth/AuthProvider`** — context that boots via `GET /auth/me`,
   exposes `useAuth()` (`status`, `user`, `org`, `memberships`, `refresh`,
-  `setMe`). `RequireAuth` redirects to `/login?next=…`; `RequireRole`
-  shows an "Access denied" panel below threshold.
+  `setMe`). Three guards in `RequireAuth.tsx`, all rendering the splash
+  while `status === 'loading'` (no content flash):
+  - `RequireAuth` — anonymous → `/login?next=<path>`.
+  - `RedirectIfAuthed` — the inverse, wrapping the public entry points
+    (`/`, `/login`, `/signup`). Signed-in → `/app` (honours `?next=`), so a
+    logged-in user revisiting the landing/login page never sees the stranger
+    experience.
+  - `RequireRole` — shows an "Access denied" panel below threshold.
 
 ### `services/api.ts`
 Extends `getJson` / `postJson` with `credentials: 'include'` and an
@@ -1178,7 +1185,7 @@ values use `tabular-nums` for stable width.
 | Suite | Count | Covers |
 |---|---|---|
 | Backend | **398** | API, auth, orgs, sim FSM, vertical transport, Tiefbau, editor, preview, background upload, project list, navmesh + path-following + optimizer walkable-clamp, microbench gates, system of record (ledger hash/verify/bitemporal, cost engine, demo generator + backfill-on-switch, capture, query, `/api/record` flow, tiered visibility policy, exports), worker PWA API (proposed entry → inbox → confirm, crew-write, zones-from-site, idempotent replay, magic-link path), **device ingestion (claim → token, staging idempotency, chain-writer fold + gap-free seq + verify, confidence routing, fleet authz) + LiveSource (Protocol conformance, event fold, sim/live toggle)** |
-| Frontend | **142** | Sim canvas, auth (AuthProvider, RequireAuth), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, record (recordApi, Directory, EntityDetail, Inbox, Costs, Ask, Timeline, ExportMenu), worker PWA (workerApi, offlineQueue enqueue/flush/dedupe, EntryWizard online+offline), **device fleet (devicesApi, Devices list + claim modal)** |
+| Frontend | **145** | Sim canvas, auth (AuthProvider, RequireAuth + RedirectIfAuthed public-page guard), api.ts, editor (ToolPalette, LevelManager, EditorCanvas, ScheduleEditor, PreviewRunPanel), MenuBar, record (recordApi, Directory, EntityDetail, Inbox, Costs, Ask, Timeline, ExportMenu), worker PWA (workerApi, offlineQueue enqueue/flush/dedupe, EntryWizard online+offline), **device fleet (devicesApi, Devices list + claim modal)** |
 
 Mypy strict scoped to `simulation/worker_internals.py`,
 `simulation/worker_behavior.py`, `simulation/navmesh.py`,

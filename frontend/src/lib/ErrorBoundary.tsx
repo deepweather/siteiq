@@ -29,7 +29,6 @@ export class ErrorBoundary extends Component<Props, State> {
     // Wire up Sentry / Datadog here when we have one. For now, browser
     // console is enough to surface in dev and to be picked up by any
     // standard error-tracking script tag.
-    // eslint-disable-next-line no-console
     console.error('Unhandled UI error:', error, info.componentStack);
   }
 

@@ -13,7 +13,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Suspense, lazy, type ReactNode } from 'react';
 import { AuthProvider } from './lib/auth/AuthProvider';
-import { RequireAuth } from './lib/auth/RequireAuth';
+import { RequireAuth, RedirectIfAuthed } from './lib/auth/RequireAuth';
 import { ErrorBoundary } from './lib/ErrorBoundary';
 
 const LandingPage = lazy(() => import('./pages/LandingPage'));
@@ -63,9 +63,12 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            <Route path="/" element={<Lazy><LandingPage /></Lazy>} />
-            <Route path="/login" element={<Lazy><LoginPage /></Lazy>} />
-            <Route path="/signup" element={<Lazy><SignupPage /></Lazy>} />
+            {/* Public entry points — bounce signed-in users straight to /app. */}
+            <Route path="/" element={<RedirectIfAuthed><Lazy><LandingPage /></Lazy></RedirectIfAuthed>} />
+            <Route path="/login" element={<RedirectIfAuthed><Lazy><LoginPage /></Lazy></RedirectIfAuthed>} />
+            <Route path="/signup" element={<RedirectIfAuthed><Lazy><SignupPage /></Lazy></RedirectIfAuthed>} />
+            {/* Token-action flows stay reachable while signed in (verify a new
+                email, accept an invite to another org, consume a magic link). */}
             <Route path="/forgot-password" element={<Lazy><ForgotPasswordPage /></Lazy>} />
             <Route path="/reset-password" element={<Lazy><ResetPasswordPage /></Lazy>} />
             <Route path="/verify-email" element={<Lazy><VerifyEmailPage /></Lazy>} />

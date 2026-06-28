@@ -1,5 +1,5 @@
 /** Route guard — redirects to /login if not signed in. */
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
 
@@ -10,6 +10,27 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (!user) {
     const next = encodeURIComponent(loc.pathname + loc.search);
     return <Navigate to={`/login?next=${next}`} replace />;
+  }
+  return <>{children}</>;
+}
+
+/**
+ * Inverse of RequireAuth — keeps already-signed-in users out of the public
+ * marketing / auth pages (landing, login, signup). Without this the app is
+ * one-directional: anonymous users get bounced *into* /login, but a logged-in
+ * user revisiting `/` or `/login` would see the stranger experience.
+ *
+ * Honours a `?next=` hint (set by RequireAuth) so a logged-in user who lands
+ * on `/login?next=/app/portfolio` is forwarded to their intended destination
+ * rather than the dashboard root.
+ */
+export function RedirectIfAuthed({ children }: { children: ReactNode }) {
+  const { status, user } = useAuth();
+  const [params] = useSearchParams();
+  if (status === 'loading') return <AuthLoading />;
+  if (user) {
+    const next = params.get('next');
+    return <Navigate to={next ? decodeURIComponent(next) : '/app'} replace />;
   }
   return <>{children}</>;
 }

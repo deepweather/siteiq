@@ -10,6 +10,27 @@ a substitute for git.
 
 ---
 
+## 2026-06 — Public pages now redirect signed-in users
+
+**Bug:** auth gating was one-directional. `RequireAuth` bounced anonymous
+users *into* `/login?next=…`, but nothing bounced authenticated users *out*
+of the public pages. A logged-in user who reopened `/`, `/login`, or
+`/signup` saw the full marketing/login experience as if they were a stranger
+(the login form only redirected *after* a successful re-submit). The auth
+state was already known globally (`AuthProvider` boots via `/auth/me`); it
+just wasn't consulted on the public side.
+
+**Fix:** added `RedirectIfAuthed` in `lib/auth/RequireAuth.tsx` — the inverse
+of `RequireAuth`. It renders the splash while `status === 'loading'` (no
+content flash), and when a user is present `Navigate`s to `?next=` or `/app`.
+Wrapped `/`, `/login`, `/signup` with it in `App.tsx`. Token-action flows
+(`/verify-email`, `/reset-password`, `/accept-invite`, `/magic-link`) are
+left reachable while signed in on purpose (accepting an invite to another
+org, verifying a changed email, consuming a magic link). The worker PWA
+already handled this (`WorkerLogin` self-redirects; no marketing page), so it
+was untouched. Verified end-to-end in a browser across all six states; 3 new
+`RedirectIfAuthed` tests (142 → 145 frontend tests).
+
 ## 2026-06 — System of record follow-ups (directory, privacy, exports)
 
 Built on the event ledger after the initial ship.
